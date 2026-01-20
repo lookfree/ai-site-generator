@@ -12,6 +12,8 @@ const VISUAL_EDIT_SCRIPT = `
   let highlightOverlay = null;
   let hoverOverlay = null;
   let editModeEnabled = false;
+  let isInlineEditing = false;
+  let originalText = '';
 
   // 创建高亮覆盖层
   function createHighlight() {
@@ -83,25 +85,16 @@ const VISUAL_EDIT_SCRIPT = `
     return path.join(' > ');
   }
 
-  // 点击处理函数
-  function handleClick(e) {
-    if (!editModeEnabled) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    selectedElement = e.target;
-    updateHighlight(selectedElement);
-
-    // 发送元素信息到父窗口
-    const styles = getComputedStyle(selectedElement);
+  // 发送元素选中信息
+  function sendElementSelected(el) {
+    const styles = getComputedStyle(el);
     window.parent.postMessage({
       type: 'ELEMENT_SELECTED',
       data: {
-        selector: getUniqueSelector(selectedElement),
-        tagName: selectedElement.tagName,
-        textContent: selectedElement.textContent.trim().slice(0, 200),
-        innerHTML: selectedElement.innerHTML.slice(0, 500),
+        selector: getUniqueSelector(el),
+        tagName: el.tagName,
+        textContent: el.textContent.trim().slice(0, 200),
+        innerHTML: el.innerHTML.slice(0, 500),
         styles: {
           color: styles.color,
           backgroundColor: styles.backgroundColor,
@@ -115,9 +108,130 @@ const VISUAL_EDIT_SCRIPT = `
     }, '*');
   }
 
+  // 点击处理函数
+  function handleClick(e) {
+    if (!editModeEnabled) return;
+    if (isInlineEditing) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    selectedElement = e.target;
+    updateHighlight(selectedElement);
+    sendElementSelected(selectedElement);
+  }
+
+  // 双击进入直接编辑模式
+  function handleDoubleClick(e) {
+    if (!editModeEnabled) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const el = e.target;
+
+    // 检查是否是可编辑的文本元素
+    const editableTags = ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'SPAN', 'DIV', 'A', 'BUTTON', 'LI', 'LABEL', 'TD', 'TH'];
+    if (!editableTags.includes(el.tagName)) return;
+
+    // 如果已经在编辑其他元素，先结束
+    if (isInlineEditing && selectedElement && selectedElement !== el) {
+      finishInlineEdit();
+    }
+
+    selectedElement = el;
+    isInlineEditing = true;
+    originalText = el.textContent;
+
+    // 设置 contenteditable
+    el.contentEditable = 'true';
+    el.focus();
+
+    // 选中全部文本
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    // 更新高亮为编辑状态
+    if (highlightOverlay) {
+      highlightOverlay.style.border = '2px solid #9333ea';
+      highlightOverlay.style.background = 'rgba(147, 51, 234, 0.1)';
+    }
+    updateHighlight(el);
+
+    console.log('[Visual Edit] Inline editing started');
+  }
+
+  // 结束直接编辑
+  function finishInlineEdit() {
+    if (!isInlineEditing || !selectedElement) return;
+
+    const el = selectedElement;
+    const newText = el.textContent.trim();
+
+    el.contentEditable = 'false';
+    isInlineEditing = false;
+
+    // 恢复高亮样式
+    if (highlightOverlay) {
+      highlightOverlay.style.border = '2px solid #3b82f6';
+      highlightOverlay.style.background = 'rgba(59, 130, 246, 0.1)';
+    }
+
+    // 如果文本有变化，通知父窗口
+    if (newText !== originalText) {
+      const selector = getUniqueSelector(el);
+
+      // 通知父窗口文本已更新（用于历史记录）
+      window.parent.postMessage({
+        type: 'INLINE_TEXT_UPDATED',
+        selector: selector,
+        oldValue: originalText,
+        newValue: newText
+      }, '*');
+
+      // 发送更新后的元素信息
+      sendElementSelected(el);
+    }
+
+    console.log('[Visual Edit] Inline editing finished');
+  }
+
+  // 处理编辑中的键盘事件
+  function handleKeyDown(e) {
+    if (!isInlineEditing) return;
+
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      finishInlineEdit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      // 恢复原始文本
+      if (selectedElement) {
+        selectedElement.textContent = originalText;
+      }
+      finishInlineEdit();
+    }
+  }
+
+  // 处理失焦事件
+  function handleBlur(e) {
+    if (isInlineEditing && e.target === selectedElement) {
+      // 延迟处理，避免点击其他元素时冲突
+      setTimeout(() => {
+        if (isInlineEditing) {
+          finishInlineEdit();
+        }
+      }, 100);
+    }
+  }
+
   // 鼠标悬停处理函数
   function handleMouseover(e) {
     if (!editModeEnabled) return;
+    if (isInlineEditing) return;
     if (e.target === selectedElement) return;
     if (!hoverOverlay) return;
 
@@ -141,6 +255,15 @@ const VISUAL_EDIT_SCRIPT = `
 
     // 点击选中元素
     document.addEventListener('click', handleClick, true);
+
+    // 双击进入直接编辑
+    document.addEventListener('dblclick', handleDoubleClick, true);
+
+    // 键盘事件
+    document.addEventListener('keydown', handleKeyDown, true);
+
+    // 失焦事件
+    document.addEventListener('blur', handleBlur, true);
 
     // 鼠标悬停预览
     document.addEventListener('mouseover', handleMouseover);
@@ -173,6 +296,9 @@ const VISUAL_EDIT_SCRIPT = `
           }, '*');
         }
       } else if (e.data.type === 'CLEAR_SELECTION') {
+        if (isInlineEditing) {
+          finishInlineEdit();
+        }
         selectedElement = null;
         if (highlightOverlay) {
           highlightOverlay.style.display = 'none';
@@ -182,6 +308,9 @@ const VISUAL_EDIT_SCRIPT = `
         document.body.style.cursor = 'crosshair';
         console.log('[Visual Edit] Edit mode enabled');
       } else if (e.data.type === 'DISABLE_EDIT_MODE') {
+        if (isInlineEditing) {
+          finishInlineEdit();
+        }
         editModeEnabled = false;
         selectedElement = null;
         document.body.style.cursor = 'default';
@@ -199,6 +328,11 @@ const VISUAL_EDIT_SCRIPT = `
         if (highlight) highlight.remove();
         if (hover) hover.remove();
         if (base) base.remove();
+
+        // 移除 contenteditable 属性
+        clone.querySelectorAll('[contenteditable]').forEach(el => {
+          el.removeAttribute('contenteditable');
+        });
 
         // 移除注入的 Visual Edit 脚本
         scripts.forEach(script => {

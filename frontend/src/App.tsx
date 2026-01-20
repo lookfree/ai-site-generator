@@ -45,14 +45,26 @@ function App() {
     const handleMessage = (event: MessageEvent) => {
       if (event.data.type === 'ELEMENT_SELECTED') {
         setSelectedElement(event.data.data);
+        setEditFormKey((k) => k + 1); // 刷新编辑表单
       } else if (event.data.type === 'UPDATE_SUCCESS') {
         console.log('Element updated:', event.data.selector);
+      } else if (event.data.type === 'INLINE_TEXT_UPDATED') {
+        // 直接在 iframe 中编辑文本后的回调
+        const { selector, oldValue, newValue } = event.data;
+        // 记录到历史
+        addAction({
+          selector,
+          property: 'textContent',
+          oldValue,
+          newValue,
+        });
+        console.log('Inline text updated:', selector, oldValue, '->', newValue);
       }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  }, [addAction]);
 
   // 当 viewMode 切换时，通知 iframe 启用/禁用编辑模式
   useEffect(() => {
