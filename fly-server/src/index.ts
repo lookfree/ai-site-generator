@@ -1,8 +1,9 @@
 // Fly.io 热更新服务器 - 使用 Volume 持久化存储（支持多项目）
-const express = require('express');
-const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
+import express, { Request, Response, NextFunction } from 'express';
+import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
+
 const app = express();
 
 app.use(cors());
@@ -12,12 +13,12 @@ app.use(express.json({ limit: '10mb' }));
 const DATA_DIR = process.env.DATA_DIR || '/data/sites';
 
 // 安全检查：验证项目 ID 格式（UUID）
-function isValidProjectId(projectId) {
+function isValidProjectId(projectId: string): boolean {
   return /^[a-f0-9-]{36}$/i.test(projectId);
 }
 
 // 获取项目目录路径
-function getProjectDir(projectId) {
+function getProjectDir(projectId: string): string {
   if (!isValidProjectId(projectId)) {
     throw new Error('Invalid project ID');
   }
@@ -25,7 +26,7 @@ function getProjectDir(projectId) {
 }
 
 // 确保项目目录存在
-function ensureProjectDir(projectId) {
+function ensureProjectDir(projectId: string): string {
   const projectDir = getProjectDir(projectId);
   if (!fs.existsSync(projectDir)) {
     fs.mkdirSync(projectDir, { recursive: true });
@@ -35,7 +36,7 @@ function ensureProjectDir(projectId) {
 }
 
 // 获取文件的完整路径
-function getFilePath(projectId, filename) {
+function getFilePath(projectId: string, filename: string): string {
   const projectDir = getProjectDir(projectId);
   // 安全检查：防止路径遍历攻击
   const safeName = path.normalize(filename).replace(/^(\.\.(\/|\\|$))+/, '');
@@ -43,20 +44,20 @@ function getFilePath(projectId, filename) {
 }
 
 // 读取项目文件
-function readProjectFile(projectId, filename) {
+function readProjectFile(projectId: string, filename: string): string | null {
   try {
     const filePath = getFilePath(projectId, filename);
     if (fs.existsSync(filePath)) {
       return fs.readFileSync(filePath, 'utf-8');
     }
   } catch (e) {
-    console.error(`[STORAGE] Error reading ${projectId}/${filename}:`, e.message);
+    console.error(`[STORAGE] Error reading ${projectId}/${filename}:`, (e as Error).message);
   }
   return null;
 }
 
 // 写入项目文件
-function writeProjectFile(projectId, filename, content) {
+function writeProjectFile(projectId: string, filename: string, content: string): void {
   ensureProjectDir(projectId);
   const filePath = getFilePath(projectId, filename);
 
@@ -70,8 +71,13 @@ function writeProjectFile(projectId, filename, content) {
   console.log(`[STORAGE] Written: ${projectId}/${filename} (${content.length} bytes)`);
 }
 
+interface FileInfo {
+  path: string;
+  size: number;
+}
+
 // 列出项目的所有文件
-function listProjectFiles(projectId) {
+function listProjectFiles(projectId: string): FileInfo[] {
   try {
     const projectDir = getProjectDir(projectId);
     if (!fs.existsSync(projectDir)) {
@@ -88,7 +94,7 @@ function listProjectFiles(projectId) {
 }
 
 // 删除项目文件
-function deleteProjectFile(projectId, filename) {
+function deleteProjectFile(projectId: string, filename: string): boolean {
   try {
     const filePath = getFilePath(projectId, filename);
     if (fs.existsSync(filePath)) {
@@ -96,13 +102,13 @@ function deleteProjectFile(projectId, filename) {
       return true;
     }
   } catch (e) {
-    console.error(`[STORAGE] Error deleting ${projectId}/${filename}:`, e.message);
+    console.error(`[STORAGE] Error deleting ${projectId}/${filename}:`, (e as Error).message);
   }
   return false;
 }
 
 // 列出所有项目
-function listProjects() {
+function listProjects(): string[] {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     return [];
@@ -114,7 +120,7 @@ function listProjects() {
 }
 
 // 删除整个项目
-function deleteProject(projectId) {
+function deleteProject(projectId: string): boolean {
   try {
     const projectDir = getProjectDir(projectId);
     if (fs.existsSync(projectDir)) {
@@ -123,7 +129,7 @@ function deleteProject(projectId) {
       return true;
     }
   } catch (e) {
-    console.error(`[STORAGE] Error deleting project ${projectId}:`, e.message);
+    console.error(`[STORAGE] Error deleting project ${projectId}:`, (e as Error).message);
   }
   return false;
 }
@@ -134,7 +140,7 @@ console.log(`[STORAGE] Projects: ${listProjects().length}`);
 // ==================== API 路由 ====================
 
 // API: 健康检查
-app.get('/api/health', (req, res) => {
+app.get('/api/health', (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -145,24 +151,24 @@ app.get('/api/health', (req, res) => {
 });
 
 // API: 列出所有项目
-app.get('/api/projects', (req, res) => {
+app.get('/api/projects', (req: Request, res: Response) => {
   const projects = listProjects();
   res.json({ projects });
 });
 
 // API: 获取项目文件列表
-app.get('/api/projects/:projectId/files', (req, res) => {
+app.get('/api/projects/:projectId/files', (req: Request, res: Response) => {
   const { projectId } = req.params;
   try {
     const files = listProjectFiles(projectId);
     res.json({ projectId, files });
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    res.status(400).json({ error: (e as Error).message });
   }
 });
 
 // API: 更新项目的单个文件（热更新！）
-app.post('/api/projects/:projectId/update-file', (req, res) => {
+app.post('/api/projects/:projectId/update-file', (req: Request, res: Response) => {
   const { projectId } = req.params;
   const { path: filePath, content } = req.body;
 
@@ -175,14 +181,19 @@ app.post('/api/projects/:projectId/update-file', (req, res) => {
     console.log(`[HOT UPDATE] ${projectId}/${filePath} (${content.length} bytes)`);
     res.json({ success: true, projectId, path: filePath, size: content.length });
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    res.status(400).json({ error: (e as Error).message });
   }
 });
 
+interface FileUpdate {
+  path: string;
+  content: string;
+}
+
 // API: 批量更新项目文件
-app.post('/api/projects/:projectId/update-files', (req, res) => {
+app.post('/api/projects/:projectId/update-files', (req: Request, res: Response) => {
   const { projectId } = req.params;
-  const { updates } = req.body; // [{ path, content }, ...]
+  const { updates } = req.body as { updates: FileUpdate[] };
 
   if (!updates || !Array.isArray(updates)) {
     return res.status(400).json({ error: 'Invalid updates array' });
@@ -195,12 +206,12 @@ app.post('/api/projects/:projectId/update-files', (req, res) => {
     console.log(`[HOT UPDATE] ${projectId}: ${updates.length} files updated`);
     res.json({ success: true, projectId, count: updates.length });
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    res.status(400).json({ error: (e as Error).message });
   }
 });
 
 // API: 获取项目的文件内容
-app.get('/api/projects/:projectId/file/:filePath(*)', (req, res) => {
+app.get('/api/projects/:projectId/file/:filePath(*)', (req: Request, res: Response) => {
   const { projectId, filePath } = req.params;
 
   try {
@@ -211,12 +222,12 @@ app.get('/api/projects/:projectId/file/:filePath(*)', (req, res) => {
       res.status(404).json({ error: 'File not found', projectId, path: filePath });
     }
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    res.status(400).json({ error: (e as Error).message });
   }
 });
 
 // API: 删除项目的文件
-app.delete('/api/projects/:projectId/file/:filePath(*)', (req, res) => {
+app.delete('/api/projects/:projectId/file/:filePath(*)', (req: Request, res: Response) => {
   const { projectId, filePath } = req.params;
 
   try {
@@ -227,12 +238,12 @@ app.delete('/api/projects/:projectId/file/:filePath(*)', (req, res) => {
       res.status(404).json({ error: 'File not found', projectId, path: filePath });
     }
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    res.status(400).json({ error: (e as Error).message });
   }
 });
 
 // API: 删除整个项目
-app.delete('/api/projects/:projectId', (req, res) => {
+app.delete('/api/projects/:projectId', (req: Request, res: Response) => {
   const { projectId } = req.params;
 
   try {
@@ -242,21 +253,21 @@ app.delete('/api/projects/:projectId', (req, res) => {
       res.status(404).json({ error: 'Project not found', projectId });
     }
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    res.status(400).json({ error: (e as Error).message });
   }
 });
 
 // ==================== 静态文件服务（按项目） ====================
 
 // 设置禁用缓存的响应头
-function setNoCacheHeaders(res) {
+function setNoCacheHeaders(res: Response): void {
   res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
 }
 
 // 根据文件名设置 Content-Type
-function setContentType(res, filename) {
+function setContentType(res: Response, filename: string): void {
   if (filename.endsWith('.css')) {
     res.type('css');
   } else if (filename.endsWith('.js')) {
@@ -275,7 +286,7 @@ function setContentType(res, filename) {
 }
 
 // 根路由 - 显示欢迎页面
-app.get('/', (req, res) => {
+app.get('/', (req: Request, res: Response) => {
   setNoCacheHeaders(res);
   res.type('html').send(`<!DOCTYPE html>
 <html lang="zh-CN">
@@ -308,7 +319,7 @@ app.get('/', (req, res) => {
 <body>
     <div class="container">
         <h1>🚀 AI Site Generator</h1>
-        <p>Preview Server with Volume Storage</p>
+        <p>Preview Server with Volume Storage (Bun)</p>
         <p>Access projects at: <code>/p/{projectId}/</code></p>
         <p>Projects: ${listProjects().length}</p>
     </div>
@@ -317,7 +328,7 @@ app.get('/', (req, res) => {
 });
 
 // 项目预览路由: /p/:projectId - 重定向到带斜杠的URL
-app.get('/p/:projectId', (req, res, next) => {
+app.get('/p/:projectId', (req: Request, res: Response, next: NextFunction) => {
   const { projectId } = req.params;
 
   // 如果路径不以斜杠结尾，重定向到带斜杠的URL
@@ -329,7 +340,7 @@ app.get('/p/:projectId', (req, res, next) => {
 });
 
 // 项目预览路由: /p/:projectId/ - 返回 index.html
-app.get('/p/:projectId/', (req, res) => {
+app.get('/p/:projectId/', (req: Request, res: Response) => {
   const { projectId } = req.params;
 
   try {
@@ -341,12 +352,12 @@ app.get('/p/:projectId/', (req, res) => {
       res.status(404).send(`Project not found or no index.html: ${projectId}`);
     }
   } catch (e) {
-    res.status(400).send(e.message);
+    res.status(400).send((e as Error).message);
   }
 });
 
 // 项目静态文件路由: /p/:projectId/:filename
-app.get('/p/:projectId/:filename(*)', (req, res) => {
+app.get('/p/:projectId/:filename(*)', (req: Request, res: Response) => {
   const { projectId, filename } = req.params;
 
   try {
@@ -359,7 +370,7 @@ app.get('/p/:projectId/:filename(*)', (req, res) => {
       res.status(404).send('Not found');
     }
   } catch (e) {
-    res.status(400).send(e.message);
+    res.status(400).send((e as Error).message);
   }
 });
 
@@ -367,7 +378,13 @@ app.get('/p/:projectId/:filename(*)', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[SERVER] Hot-reload server running on port ${PORT}`);
-  console.log(`[SERVER] Storage: ${DATA_DIR}`);
-  console.log(`[SERVER] Projects: ${listProjects().length}`);
+  console.log(`
+╔════════════════════════════════════════════════════════╗
+║      AI Site Generator - Fly Server (Bun)              ║
+╠════════════════════════════════════════════════════════╣
+║  Server:    http://0.0.0.0:${PORT}                         ║
+║  Storage:   ${DATA_DIR.padEnd(40)}║
+║  Projects:  ${String(listProjects().length).padEnd(40)}║
+╚════════════════════════════════════════════════════════╝
+  `);
 });
