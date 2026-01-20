@@ -17,7 +17,7 @@
 ai-site-generator/
 ├── frontend/          # React 前端 (Vite + TypeScript + Tailwind)
 ├── backend/           # 后端服务 (Bun + Express + PostgreSQL)
-├── fly-server/        # Fly.io 热更新服务器 (Node.js + Express + Volume 持久化)
+├── fly-server/        # Fly.io 热更新服务器 (Bun + TypeScript + Express + Volume 持久化)
 ├── generated/         # 本地生成的项目文件存放目录
 └── DESIGN.md          # 架构设计文档
 ```
@@ -39,7 +39,6 @@ ai-site-generator/
 ### 前置要求
 
 - [Bun](https://bun.sh/) (v1.0+)
-- [Node.js](https://nodejs.org/) (v18+)
 - [PostgreSQL](https://www.postgresql.org/) (v14+)
 - [Claude Code CLI](https://claude.ai/claude-code) (本地安装)
 - [Fly.io CLI](https://fly.io/docs/hands-on/install-flyctl/) (可选，用于部署)
@@ -57,7 +56,7 @@ bun install
 
 # 安装 Fly.io 服务器依赖
 cd ../fly-server
-npm install
+bun install
 ```
 
 ### 2. 配置环境变量
@@ -125,7 +124,7 @@ bun run dev
 
 # 可选 - 本地测试 Fly.io 服务器
 cd fly-server
-npm run dev
+bun dev
 ```
 
 ### 6. 访问应用
@@ -182,8 +181,8 @@ npm run dev
 ## 技术栈
 
 - **前端**: React 18 + TypeScript + Vite + Tailwind CSS
-- **后端**: Bun + Express + PostgreSQL
-- **预览服务**: Fly.io + Node.js Express
+- **后端**: Bun + TypeScript + Express + PostgreSQL
+- **预览服务**: Fly.io + Bun + TypeScript + Express
 - **AI**: 本地 Claude Code CLI
 
 ## 许可证
