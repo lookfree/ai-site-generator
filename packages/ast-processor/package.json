@@ -1,0 +1,45 @@
+{
+  "name": "ast-processor",
+  "version": "0.1.0",
+  "description": "Client-side AST processing system for Visual Edit",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean --external @swc/core --external @swc/wasm-web",
+    "dev": "tsup src/index.ts --format esm --dts --watch --external @swc/core --external @swc/wasm-web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "ast",
+    "parser",
+    "swc",
+    "jsx",
+    "tailwind",
+    "visual-editor"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@swc/wasm-web": "^1.3.100"
+  },
+  "devDependencies": {
+    "@swc/core": "^1.3.100",
+    "@types/node": "^20.10.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.2.2",
+    "vitest": "^1.0.0"
+  }
+}
