@@ -1,0 +1,14 @@
+{
+  "name": "@ai-site-generator/packages",
+  "private": true,
+  "workspaces": [
+    "vite-plugin-jsx-tagger",
+    "project-template",
+    "template-generator"
+  ],
+  "scripts": {
+    "build": "bun run --filter '*' build",
+    "test": "bun run --filter '*' test",
+    "dev": "bun run --filter '*' dev"
+  }
+}
