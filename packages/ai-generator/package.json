@@ -1,0 +1,37 @@
+{
+  "name": "ai-generator",
+  "version": "0.1.0",
+  "description": "AI-powered React + Tailwind CSS project generator",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "typescript": "^5.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsup": "^8.0.2",
+    "vitest": "^1.6.0"
+  },
+  "peerDependencies": {
+    "vite-plugin-jsx-tagger": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "vite-plugin-jsx-tagger": {
+      "optional": true
+    }
+  }
+}
