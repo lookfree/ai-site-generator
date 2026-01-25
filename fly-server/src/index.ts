@@ -63,6 +63,11 @@ app.all('/p/:projectId/*', async (c) => {
       body: c.req.method !== 'GET' && c.req.method !== 'HEAD' ? c.req.raw.body : undefined,
     });
 
+    // 对于根路径的 HTML 请求，注入 <base> 标签
+    if (pathAfterProject === '/' || pathAfterProject === '/index.html') {
+      return await injectBaseTag(response, projectId);
+    }
+
     // 转发响应
     const responseHeaders = new Headers(response.headers);
     // 移除可能导致问题的头部
@@ -78,6 +83,35 @@ app.all('/p/:projectId/*', async (c) => {
     return c.json({ success: false, error: 'Proxy error' }, 502);
   }
 });
+
+// 辅助函数：注入 <base> 标签到 HTML 响应
+async function injectBaseTag(response: Response, projectId: string): Promise<Response> {
+  const contentType = response.headers.get('content-type') || '';
+
+  // 只处理 HTML 响应
+  if (!contentType.includes('text/html')) {
+    return response;
+  }
+
+  let html = await response.text();
+  const baseHref = `/p/${projectId}/`;
+
+  // 在 <head> 标签后注入 <base> 标签
+  if (html.includes('<head>')) {
+    html = html.replace('<head>', `<head>\n    <base href="${baseHref}">`);
+  } else if (html.includes('<HEAD>')) {
+    html = html.replace('<HEAD>', `<HEAD>\n    <base href="${baseHref}">`);
+  }
+
+  const responseHeaders = new Headers(response.headers);
+  responseHeaders.delete('content-encoding');
+  responseHeaders.delete('content-length');
+
+  return new Response(html, {
+    status: response.status,
+    headers: responseHeaders,
+  });
+}
 
 // 处理不带尾随斜杠的项目预览路由
 app.get('/p/:projectId', async (c) => {
@@ -98,14 +132,9 @@ app.get('/p/:projectId', async (c) => {
     proxyHeaders.set('Origin', `http://localhost:${instance.port}`);
 
     const response = await fetch(targetUrl, { headers: proxyHeaders });
-    const responseHeaders = new Headers(response.headers);
-    responseHeaders.delete('content-encoding');
-    responseHeaders.delete('content-length');
 
-    return new Response(response.body, {
-      status: response.status,
-      headers: responseHeaders,
-    });
+    // 注入 <base> 标签使相对路径正确解析
+    return await injectBaseTag(response, projectId);
   } catch (error) {
     console.error(`[Proxy] Error proxying to ${targetUrl}:`, error);
     return c.json({ success: false, error: 'Proxy error' }, 502);
