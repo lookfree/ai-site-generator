@@ -122,7 +122,8 @@ function parseCodeBlocks(content: string): Array<{ path: string; content: string
   const files: Array<{ path: string; content: string }> = [];
 
   // 匹配 markdown 代码块: ```language ... ```
-  const codeBlockRegex = /```(\w+)?\s*\n([\s\S]*?)```/g;
+  // 更灵活的正则：允许语言标识符后有任意空白字符（包括无换行的情况）
+  const codeBlockRegex = /```(\w+)?[\s]*\n?([\s\S]*?)```/g;
   let match;
 
   while ((match = codeBlockRegex.exec(content)) !== null) {
@@ -277,13 +278,34 @@ export async function generateWithKimi(
     files.forEach(f => console.log(`  - ${f.path} (${f.content.length} bytes)`));
 
     if (files.length === 0) {
-      // 如果没有解析到代码块，记录原始响应用于调试
-      console.log('[KIMI] No code blocks found. Raw response:', content.slice(0, 500));
-      return {
-        success: false,
-        files: [],
-        error: '未能从响应中解析出代码文件',
-      };
+      // 如果没有解析到代码块，尝试备用解析方法
+      console.log('[KIMI] No code blocks found with primary regex. Trying fallback...');
+      console.log('[KIMI] Raw response preview:', content.slice(0, 1000));
+
+      // 备用方法：尝试匹配任何看起来像 React 组件的代码
+      const fallbackMatch = content.match(/(?:import[\s\S]*?from[\s\S]*?;[\s\S]*?)?((?:export\s+)?(?:default\s+)?function\s+\w+[\s\S]*?return\s*\([\s\S]*?\);?\s*\})/);
+      if (fallbackMatch) {
+        console.log('[KIMI] Fallback found React component code');
+        const code = fallbackMatch[0].trim();
+        files.push({ path: 'src/App.tsx', content: code });
+      }
+
+      // 如果仍然没有找到，尝试直接提取 ``` 之间的内容（更宽松的匹配）
+      if (files.length === 0) {
+        const looseMatch = content.match(/```(?:tsx?|jsx?|typescript|javascript)?[^\n]*\n([\s\S]+?)```/);
+        if (looseMatch && looseMatch[1]) {
+          console.log('[KIMI] Loose regex found code block');
+          files.push({ path: 'src/App.tsx', content: looseMatch[1].trim() });
+        }
+      }
+
+      if (files.length === 0) {
+        return {
+          success: false,
+          files: [],
+          error: '未能从响应中解析出代码文件',
+        };
+      }
     }
 
     // 报告完成进度

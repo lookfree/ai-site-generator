@@ -5,6 +5,8 @@
 
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
+import { readFile, writeFile } from 'fs/promises';
+import { join } from 'path';
 import type { ViteInstance, ViteManagerConfig, ViteStatus, LogEvent, ExitEvent } from '../types';
 
 const DEFAULT_CONFIG: ViteManagerConfig = {
@@ -63,6 +65,9 @@ export class ViteDevServerManager extends EventEmitter {
     this.instances.set(projectId, instance);
 
     try {
+      // 确保 vite.config 允许所有 hosts
+      await this.ensureAllowedHosts(projectPath);
+
       // 启动 Vite 进程
       const proc = spawn('bun', [
         'run', 'vite',
@@ -131,6 +136,42 @@ export class ViteDevServerManager extends EventEmitter {
     this.emit('stopped', { projectId });
 
     console.log(`[ViteManager] Stopped: ${projectId}`);
+  }
+
+  /**
+   * 确保 vite.config 允许所有 hosts
+   */
+  private async ensureAllowedHosts(projectPath: string): Promise<void> {
+    const configPath = join(projectPath, 'vite.config.ts');
+
+    try {
+      let content = await readFile(configPath, 'utf-8');
+
+      // 检查是否已经有 allowedHosts 配置
+      if (content.includes('allowedHosts')) {
+        return; // 已配置，无需修改
+      }
+
+      // 在 server 配置中添加 allowedHosts: 'all'
+      if (content.includes('server:')) {
+        content = content.replace(
+          /server:\s*{/,
+          "server: {\n    allowedHosts: 'all',"
+        );
+      } else if (content.includes('defineConfig({')) {
+        // 如果没有 server 配置，添加一个
+        content = content.replace(
+          /defineConfig\({/,
+          "defineConfig({\n  server: {\n    allowedHosts: 'all',\n  },"
+        );
+      }
+
+      await writeFile(configPath, content, 'utf-8');
+      console.log(`[ViteManager] Updated vite.config.ts with allowedHosts`);
+    } catch (error) {
+      console.warn(`[ViteManager] Failed to update vite.config.ts:`, error);
+      // 不阻止启动，继续尝试
+    }
   }
 
   /**

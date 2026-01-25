@@ -14,6 +14,8 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // 允许所有 hosts 以支持代理访问
+    allowedHosts: 'all',
     hmr: {
       overlay: true,
     },

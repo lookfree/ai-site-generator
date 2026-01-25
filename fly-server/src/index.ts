@@ -30,6 +30,88 @@ app.route('/projects', projectRoutes);
 app.route('/health', healthRoutes);
 app.get('/metrics', (c) => c.redirect('/health/metrics'));
 
+// 项目预览代理 - 将 /p/{projectId}/* 转发到对应的 Vite Dev Server
+app.all('/p/:projectId/*', async (c) => {
+  const projectId = c.req.param('projectId');
+  const instance = viteManager.getInstance(projectId);
+
+  if (!instance || instance.status !== 'running') {
+    return c.json({ success: false, error: 'Project not running' }, 404);
+  }
+
+  // 获取剩余路径
+  const fullPath = c.req.path;
+  const pathAfterProject = fullPath.replace(`/p/${projectId}`, '') || '/';
+
+  // 代理请求到 Vite Dev Server
+  const targetUrl = `http://localhost:${instance.port}${pathAfterProject}`;
+
+  try {
+    // 创建新的请求头，设置 Host 为 localhost 以绕过 Vite 的 allowedHosts 检查
+    const proxyHeaders = new Headers();
+    proxyHeaders.set('Host', `localhost:${instance.port}`);
+    proxyHeaders.set('Origin', `http://localhost:${instance.port}`);
+    // 复制其他重要头部
+    const accept = c.req.header('Accept');
+    if (accept) proxyHeaders.set('Accept', accept);
+    const acceptEncoding = c.req.header('Accept-Encoding');
+    if (acceptEncoding) proxyHeaders.set('Accept-Encoding', acceptEncoding);
+
+    const response = await fetch(targetUrl, {
+      method: c.req.method,
+      headers: proxyHeaders,
+      body: c.req.method !== 'GET' && c.req.method !== 'HEAD' ? c.req.raw.body : undefined,
+    });
+
+    // 转发响应
+    const responseHeaders = new Headers(response.headers);
+    // 移除可能导致问题的头部
+    responseHeaders.delete('content-encoding');
+    responseHeaders.delete('content-length');
+
+    return new Response(response.body, {
+      status: response.status,
+      headers: responseHeaders,
+    });
+  } catch (error) {
+    console.error(`[Proxy] Error proxying to ${targetUrl}:`, error);
+    return c.json({ success: false, error: 'Proxy error' }, 502);
+  }
+});
+
+// 处理不带尾随斜杠的项目预览路由
+app.get('/p/:projectId', async (c) => {
+  const projectId = c.req.param('projectId');
+  const instance = viteManager.getInstance(projectId);
+
+  if (!instance || instance.status !== 'running') {
+    return c.json({ success: false, error: 'Project not running' }, 404);
+  }
+
+  // 代理到根路径
+  const targetUrl = `http://localhost:${instance.port}/`;
+
+  try {
+    // 设置 Host 为 localhost 以绕过 Vite 的 allowedHosts 检查
+    const proxyHeaders = new Headers();
+    proxyHeaders.set('Host', `localhost:${instance.port}`);
+    proxyHeaders.set('Origin', `http://localhost:${instance.port}`);
+
+    const response = await fetch(targetUrl, { headers: proxyHeaders });
+    const responseHeaders = new Headers(response.headers);
+    responseHeaders.delete('content-encoding');
+    responseHeaders.delete('content-length');
+
+    return new Response(response.body, {
+      status: response.status,
+      headers: responseHeaders,
+    });
+  } catch (error) {
+    console.error(`[Proxy] Error proxying to ${targetUrl}:`, error);
+    return c.json({ success: false, error: 'Proxy error' }, 502);
+  }
+});
+
 // 根路由 - 欢迎页面
 app.get('/', async (c) => {
   const projectCount = await countProjects();

@@ -117,7 +117,8 @@ router.post('/generate', async (req: Request, res: Response) => {
             projectName,
             description,
           });
-          console.log(`[API] Scaffold created: ${scaffoldResult.files.length} files`);
+          const fileCount = scaffoldResult?.files?.length ?? 0;
+          console.log(`[API] Scaffold created: ${fileCount} files`);
         } catch (scaffoldError) {
           console.warn('[API] Scaffold creation failed, continuing with code generation:', scaffoldError);
           // 脚手架创建失败不阻止代码生成
