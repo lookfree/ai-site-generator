@@ -1,12 +1,30 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getHmrWebSocketUrl } from '../services/api';
 
+interface SelectedElementInfo {
+  jsxId: string;
+  tagName: string;
+  className: string;
+  textContent: string;
+  computedStyles: Record<string, string>;
+  boundingRect: DOMRect;
+  attributes: Record<string, string>;
+  path: string[];
+}
+
+interface ElementUpdate {
+  type: 'text' | 'className' | 'style' | 'attribute';
+  value: string | Record<string, string>;
+}
+
 interface PreviewFrameProps {
   projectId: string;
   previewUrl: string;
   editModeEnabled?: boolean;
   onHmrUpdate?: () => void;
   onHmrError?: (error: { message: string; stack?: string }) => void;
+  onElementSelected?: (element: SelectedElementInfo | null) => void;
+  elementUpdate?: { jsxId: string; updates: ElementUpdate } | null;
 }
 
 type DeviceType = 'desktop' | 'tablet' | 'mobile';
@@ -38,7 +56,7 @@ const deviceSizes = {
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_RECONNECT_DELAY = 1000;
 
-function PreviewFrame({ projectId, previewUrl, editModeEnabled = false, onHmrUpdate, onHmrError }: PreviewFrameProps) {
+function PreviewFrame({ projectId, previewUrl, editModeEnabled = false, onHmrUpdate, onHmrError, onElementSelected, elementUpdate }: PreviewFrameProps) {
   const [device, setDevice] = useState<DeviceType>('desktop');
   const [key, setKey] = useState(0);
   const [hmrStatus, setHmrStatus] = useState<HmrConnectionStatus>('disconnected');
@@ -207,6 +225,59 @@ function PreviewFrame({ projectId, previewUrl, editModeEnabled = false, onHmrUpd
       );
     }
   }, [editModeEnabled]);
+
+  // 当 elementUpdate 变化时，发送更新消息到 iframe
+  useEffect(() => {
+    if (elementUpdate && iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.postMessage(
+        {
+          type: 'UPDATE_ELEMENT',
+          payload: {
+            jsxId: elementUpdate.jsxId,
+            ...elementUpdate.updates
+          }
+        },
+        '*'
+      );
+    }
+  }, [elementUpdate]);
+
+  // 监听来自 iframe 的消息（元素选择等）
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const { type, payload } = event.data || {};
+
+      switch (type) {
+        case 'ELEMENT_SELECTED':
+          console.log('[PreviewFrame] Element selected:', payload);
+          onElementSelected?.(payload as SelectedElementInfo);
+          break;
+
+        case 'ELEMENT_DESELECTED':
+          console.log('[PreviewFrame] Element deselected');
+          onElementSelected?.(null);
+          break;
+
+        case 'EDIT_MODE_ENABLED':
+          console.log('[PreviewFrame] Edit mode enabled in iframe');
+          break;
+
+        case 'EDIT_MODE_DISABLED':
+          console.log('[PreviewFrame] Edit mode disabled in iframe');
+          break;
+
+        case 'TEXT_CHANGED':
+          console.log('[PreviewFrame] Text changed:', payload);
+          // TODO: 处理文本变更，可能需要回调
+          break;
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [onElementSelected]);
 
   // 获取 HMR 状态指示器
   const getHmrStatusIndicator = () => {

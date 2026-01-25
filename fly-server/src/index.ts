@@ -112,7 +112,7 @@ async function injectScripts(response: Response, projectId: string): Promise<Res
   // 注入内容：base 标签 + visual-edit-script
   const injectedContent = `
     <base href="${baseHref}">
-    <script src="/static/visual-edit-script.js"></script>`;
+    <script type="module" src="/static/visual-edit-script.js"></script>`;
 
   // 在 <head> 标签后注入
   if (html.includes('<head>')) {

@@ -575,7 +575,14 @@ ${clone.innerHTML}
   }
 };
 if (typeof window !== "undefined") {
-  new VisualEditController();
+  const initController = () => {
+    new VisualEditController();
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initController);
+  } else {
+    initController();
+  }
 }
 export {
   VisualEditController

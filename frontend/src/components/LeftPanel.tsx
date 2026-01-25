@@ -2,6 +2,18 @@ import { useState, useCallback } from 'react';
 import type { ComponentNode } from '../services/api';
 import ComponentTree from './ComponentTree';
 import PropertyPanel from './PropertyPanel';
+import VisualEditPanel from './VisualEditPanel';
+
+interface SelectedElementInfo {
+  jsxId: string;
+  tagName: string;
+  className: string;
+  textContent: string;
+  computedStyles: Record<string, string>;
+  boundingRect: DOMRect;
+  attributes: Record<string, string>;
+  path: string[];
+}
 
 interface LeftPanelProps {
   viewMode: 'chat' | 'design';
@@ -11,6 +23,8 @@ interface LeftPanelProps {
   onGenerate: (description: string) => void;
   projectId?: string;
   onSelectComponent?: (component: ComponentNode) => void;
+  selectedElementFromIframe?: SelectedElementInfo | null;
+  onUpdateElement?: (jsxId: string, updates: { type: string; value: unknown }) => void;
 }
 
 function LeftPanel({
@@ -21,6 +35,8 @@ function LeftPanel({
   onGenerate,
   projectId,
   onSelectComponent,
+  selectedElementFromIframe,
+  onUpdateElement,
 }: LeftPanelProps) {
   const [description, setDescription] = useState('');
   const [designView, setDesignView] = useState<'tree' | 'properties'>('tree');
@@ -217,13 +233,13 @@ function LeftPanel({
               </div>
             )}
 
-            {/* 属性面板视图 - AST 驱动 */}
+            {/* 属性面板视图 */}
             {designView === 'properties' && projectId && (
-              <div className="flex-1 overflow-hidden">
-                <PropertyPanel
-                  projectId={projectId}
-                  selectedComponent={selectedComponentFromTree}
-                  onRefresh={handleRefreshTree}
+              <div className="flex-1 overflow-hidden flex flex-col">
+                {/* Visual Edit Panel - Lovable 风格的属性编辑面板 */}
+                <VisualEditPanel
+                  selectedElement={selectedElementFromIframe}
+                  onUpdateElement={onUpdateElement}
                 />
               </div>
             )}

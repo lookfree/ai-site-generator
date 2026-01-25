@@ -7,6 +7,22 @@ import { generateProject, getProjectStatus, getDirectPreviewUrl, getProjects, sy
 
 type ViewMode = 'chat' | 'design';
 
+interface SelectedElementInfo {
+  jsxId: string;
+  tagName: string;
+  className: string;
+  textContent: string;
+  computedStyles: Record<string, string>;
+  boundingRect: DOMRect;
+  attributes: Record<string, string>;
+  path: string[];
+}
+
+interface ElementUpdate {
+  type: 'text' | 'className' | 'style' | 'attribute';
+  value: string | Record<string, string>;
+}
+
 function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('chat');
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
@@ -15,6 +31,8 @@ function App() {
   const [generationPercent, setGenerationPercent] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showProjectList, setShowProjectList] = useState(false);
+  const [selectedElement, setSelectedElement] = useState<SelectedElementInfo | null>(null);
+  const [elementUpdate, setElementUpdate] = useState<{ jsxId: string; updates: ElementUpdate } | null>(null);
 
   // 加载最近的已部署项目（如果有）
   useEffect(() => {
@@ -135,6 +153,18 @@ function App() {
     // TODO: 同步到属性面板
   }, []);
 
+  // 处理 iframe 中元素选择
+  const handleElementSelected = useCallback((element: SelectedElementInfo | null) => {
+    console.log('Element selected from iframe:', element);
+    setSelectedElement(element);
+  }, []);
+
+  // 处理元素更新（来自属性面板）
+  const handleUpdateElement = useCallback((jsxId: string, updates: { type: string; value: unknown }) => {
+    console.log('Update element:', jsxId, updates);
+    setElementUpdate({ jsxId, updates: updates as ElementUpdate });
+  }, []);
+
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -158,6 +188,8 @@ function App() {
           onGenerate={handleGenerate}
           projectId={currentProject?.id}
           onSelectComponent={handleSelectComponent}
+          selectedElementFromIframe={selectedElement}
+          onUpdateElement={handleUpdateElement}
         />
 
         {/* 右侧预览区 */}
@@ -169,6 +201,8 @@ function App() {
                 projectId={currentProject.id}
                 previewUrl={getDirectPreviewUrl(currentProject.id)}
                 editModeEnabled={viewMode === 'design'}
+                onElementSelected={handleElementSelected}
+                elementUpdate={elementUpdate}
               />
             ) : !isGenerating ? (
               <div className="h-full flex items-center justify-center text-gray-400">

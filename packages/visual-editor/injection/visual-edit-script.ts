@@ -724,9 +724,18 @@ ${clone.innerHTML}
   }
 }
 
-// 初始化
+// 初始化 - 需要等待 DOM 加载完成
 if (typeof window !== 'undefined') {
-  new VisualEditController();
+  const initController = () => {
+    new VisualEditController();
+  };
+
+  // 如果 DOM 已经加载完成，直接初始化
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initController);
+  } else {
+    initController();
+  }
 }
 
 export { VisualEditController };
