@@ -109,13 +109,15 @@ export class ProjectManager {
 
     for (const update of updates) {
       const filePath = join(projectPath, update.path);
+      // 默认为 'update' 操作（兼容后端不传 operation 字段的情况）
+      const operation = update.operation || 'update';
 
-      switch (update.operation) {
+      switch (operation) {
         case 'create':
         case 'update':
           await mkdir(dirname(filePath), { recursive: true });
           await writeFile(filePath, update.content, 'utf-8');
-          console.log(`[ProjectManager] ${update.operation}: ${update.path}`);
+          console.log(`[ProjectManager] ${operation}: ${update.path}`);
           break;
 
         case 'delete':
