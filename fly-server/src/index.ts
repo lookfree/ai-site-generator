@@ -30,6 +30,13 @@ app.route('/projects', projectRoutes);
 app.route('/health', healthRoutes);
 app.get('/metrics', (c) => c.redirect('/health/metrics'));
 
+// 处理不带尾随斜杠的项目预览路由 - 重定向到带斜杠的版本
+// 必须放在 wildcard 路由之前
+app.get('/p/:projectId', (c) => {
+  const projectId = c.req.param('projectId');
+  return c.redirect(`/p/${projectId}/`);
+});
+
 // 项目预览代理 - 将 /p/{projectId}/* 转发到对应的 Vite Dev Server
 app.all('/p/:projectId/*', async (c) => {
   const projectId = c.req.param('projectId');
@@ -39,12 +46,12 @@ app.all('/p/:projectId/*', async (c) => {
     return c.json({ success: false, error: 'Project not running' }, 404);
   }
 
-  // 获取剩余路径
+  // 获取完整路径 - Vite 配置了 base: '/p/{projectId}/'，需要转发完整路径
   const fullPath = c.req.path;
-  const pathAfterProject = fullPath.replace(`/p/${projectId}`, '') || '/';
+  const queryString = new URL(c.req.url).search;
 
-  // 代理请求到 Vite Dev Server
-  const targetUrl = `http://localhost:${instance.port}${pathAfterProject}`;
+  // 代理请求到 Vite Dev Server (保留完整路径)
+  const targetUrl = `http://localhost:${instance.port}${fullPath}${queryString}`;
 
   try {
     // 创建新的请求头，设置 Host 为 localhost 以绕过 Vite 的 allowedHosts 检查
@@ -64,6 +71,7 @@ app.all('/p/:projectId/*', async (c) => {
     });
 
     // 对于根路径的 HTML 请求，注入 <base> 标签
+    const pathAfterProject = fullPath.replace(`/p/${projectId}`, '') || '/';
     if (pathAfterProject === '/' || pathAfterProject === '/index.html') {
       return await injectBaseTag(response, projectId);
     }
@@ -112,34 +120,6 @@ async function injectBaseTag(response: Response, projectId: string): Promise<Res
     headers: responseHeaders,
   });
 }
-
-// 处理不带尾随斜杠的项目预览路由
-app.get('/p/:projectId', async (c) => {
-  const projectId = c.req.param('projectId');
-  const instance = viteManager.getInstance(projectId);
-
-  if (!instance || instance.status !== 'running') {
-    return c.json({ success: false, error: 'Project not running' }, 404);
-  }
-
-  // 代理到根路径
-  const targetUrl = `http://localhost:${instance.port}/`;
-
-  try {
-    // 设置 Host 为 localhost 以绕过 Vite 的 allowedHosts 检查
-    const proxyHeaders = new Headers();
-    proxyHeaders.set('Host', `localhost:${instance.port}`);
-    proxyHeaders.set('Origin', `http://localhost:${instance.port}`);
-
-    const response = await fetch(targetUrl, { headers: proxyHeaders });
-
-    // 注入 <base> 标签使相对路径正确解析
-    return await injectBaseTag(response, projectId);
-  } catch (error) {
-    console.error(`[Proxy] Error proxying to ${targetUrl}:`, error);
-    return c.json({ success: false, error: 'Proxy error' }, 502);
-  }
-});
 
 // 根路由 - 欢迎页面
 app.get('/', async (c) => {

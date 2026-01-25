@@ -65,8 +65,8 @@ export class ViteDevServerManager extends EventEmitter {
     this.instances.set(projectId, instance);
 
     try {
-      // 确保 vite.config 允许所有 hosts
-      await this.ensureAllowedHosts(projectPath);
+      // 确保 vite.config 配置正确 (allowedHosts 和 base)
+      await this.ensureViteConfig(projectId, projectPath);
 
       // 启动 Vite 进程
       const proc = spawn('bun', [
@@ -139,35 +139,50 @@ export class ViteDevServerManager extends EventEmitter {
   }
 
   /**
-   * 确保 vite.config 允许所有 hosts
+   * 确保 vite.config 配置正确 (allowedHosts 和 base)
    */
-  private async ensureAllowedHosts(projectPath: string): Promise<void> {
+  private async ensureViteConfig(projectId: string, projectPath: string): Promise<void> {
     const configPath = join(projectPath, 'vite.config.ts');
+    const basePath = `/p/${projectId}/`;
 
     try {
       let content = await readFile(configPath, 'utf-8');
+      let modified = false;
 
-      // 检查是否已经有 allowedHosts 配置
-      if (content.includes('allowedHosts')) {
-        return; // 已配置，无需修改
-      }
-
-      // 在 server 配置中添加 allowedHosts: 'all'
-      if (content.includes('server:')) {
-        content = content.replace(
-          /server:\s*{/,
-          "server: {\n    allowedHosts: 'all',"
-        );
+      // 1. 添加或更新 base 配置
+      if (content.includes('base:')) {
+        // 更新现有的 base 配置
+        content = content.replace(/base:\s*['"][^'"]*['"]/, `base: '${basePath}'`);
+        modified = true;
       } else if (content.includes('defineConfig({')) {
-        // 如果没有 server 配置，添加一个
+        // 在 defineConfig 后添加 base
         content = content.replace(
-          /defineConfig\({/,
-          "defineConfig({\n  server: {\n    allowedHosts: 'all',\n  },"
+          /defineConfig\(\{/,
+          `defineConfig({\n  base: '${basePath}',`
         );
+        modified = true;
       }
 
-      await writeFile(configPath, content, 'utf-8');
-      console.log(`[ViteManager] Updated vite.config.ts with allowedHosts`);
+      // 2. 添加 allowedHosts 配置
+      if (!content.includes('allowedHosts')) {
+        if (content.includes('server:')) {
+          content = content.replace(
+            /server:\s*\{/,
+            "server: {\n    allowedHosts: 'all',"
+          );
+        } else if (content.includes('defineConfig({')) {
+          content = content.replace(
+            /defineConfig\(\{/,
+            "defineConfig({\n  server: {\n    allowedHosts: 'all',\n  },"
+          );
+        }
+        modified = true;
+      }
+
+      if (modified) {
+        await writeFile(configPath, content, 'utf-8');
+        console.log(`[ViteManager] Updated vite.config.ts with base: ${basePath} and allowedHosts`);
+      }
     } catch (error) {
       console.warn(`[ViteManager] Failed to update vite.config.ts:`, error);
       // 不阻止启动，继续尝试
