@@ -7,7 +7,9 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
-import { mkdir, readdir } from 'fs/promises';
+import { serveStatic } from '@hono/node-server/serve-static';
+import { mkdir, readdir, readFile } from 'fs/promises';
+import { join } from 'path';
 import type { Server } from 'http';
 
 import projectRoutes from './routes/projects';
@@ -29,6 +31,9 @@ app.use('*', logger());
 app.route('/projects', projectRoutes);
 app.route('/health', healthRoutes);
 app.get('/metrics', (c) => c.redirect('/health/metrics'));
+
+// 静态文件服务 - 用于 visual-edit-script 等注入脚本
+app.use('/static/*', serveStatic({ root: './' }));
 
 // 处理不带尾随斜杠的项目预览路由 - 重定向到带斜杠的版本
 // 必须放在 wildcard 路由之前
@@ -70,10 +75,10 @@ app.all('/p/:projectId/*', async (c) => {
       body: c.req.method !== 'GET' && c.req.method !== 'HEAD' ? c.req.raw.body : undefined,
     });
 
-    // 对于根路径的 HTML 请求，注入 <base> 标签
+    // 对于根路径的 HTML 请求，注入脚本
     const pathAfterProject = fullPath.replace(`/p/${projectId}`, '') || '/';
     if (pathAfterProject === '/' || pathAfterProject === '/index.html') {
-      return await injectBaseTag(response, projectId);
+      return await injectScripts(response, projectId);
     }
 
     // 转发响应
@@ -92,8 +97,8 @@ app.all('/p/:projectId/*', async (c) => {
   }
 });
 
-// 辅助函数：注入 <base> 标签到 HTML 响应
-async function injectBaseTag(response: Response, projectId: string): Promise<Response> {
+// 辅助函数：注入 <base> 标签和 visual-edit-script 到 HTML 响应
+async function injectScripts(response: Response, projectId: string): Promise<Response> {
   const contentType = response.headers.get('content-type') || '';
 
   // 只处理 HTML 响应
@@ -104,11 +109,16 @@ async function injectBaseTag(response: Response, projectId: string): Promise<Res
   let html = await response.text();
   const baseHref = `/p/${projectId}/`;
 
-  // 在 <head> 标签后注入 <base> 标签
+  // 注入内容：base 标签 + visual-edit-script
+  const injectedContent = `
+    <base href="${baseHref}">
+    <script src="/static/visual-edit-script.js"></script>`;
+
+  // 在 <head> 标签后注入
   if (html.includes('<head>')) {
-    html = html.replace('<head>', `<head>\n    <base href="${baseHref}">`);
+    html = html.replace('<head>', `<head>${injectedContent}`);
   } else if (html.includes('<HEAD>')) {
-    html = html.replace('<HEAD>', `<HEAD>\n    <base href="${baseHref}">`);
+    html = html.replace('<HEAD>', `<HEAD>${injectedContent}`);
   }
 
   const responseHeaders = new Headers(response.headers);

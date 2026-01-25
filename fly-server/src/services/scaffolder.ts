@@ -89,6 +89,12 @@ export function generateScaffold(config: ProjectConfig): ScaffoldResult {
     content: generateMainTsx(),
   });
 
+  // jsx-id-plugin.js - 用于注入 data-jsx-id 属性的 Babel 插件
+  files.push({
+    path: 'jsx-id-plugin.js',
+    content: generateJsxIdPlugin(),
+  });
+
   return {
     success: true,
     files,
@@ -153,10 +159,15 @@ function generateViteConfig(config: ProjectConfig): string {
   const idPrefix = config.projectId.slice(0, 8);
   return `import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import jsxIdPlugin from './jsx-id-plugin.js';
 
 export default defineConfig({
   plugins: [
-    react(),
+    react({
+      babel: {
+        plugins: [jsxIdPlugin],
+      },
+    }),
   ],
   server: {
     port: 5173,
@@ -377,6 +388,74 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>
 );
+`;
+}
+
+function generateJsxIdPlugin(): string {
+  return `/**
+ * Babel 插件：为 JSX 元素注入 data-jsx-id 属性
+ * 用于 Visual Editor 的元素定位
+ */
+
+let fileCounter = 0;
+const fileMap = new Map();
+
+function getFileId(filename) {
+  if (!fileMap.has(filename)) {
+    fileMap.set(filename, ++fileCounter);
+  }
+  return fileMap.get(filename);
+}
+
+export default function jsxIdPlugin() {
+  return {
+    name: 'jsx-id-injector',
+    visitor: {
+      JSXOpeningElement(path, state) {
+        const filename = state.filename || 'unknown';
+        const { node } = path;
+
+        // 跳过 Fragment
+        if (node.name.type === 'JSXIdentifier' && node.name.name === 'Fragment') {
+          return;
+        }
+        if (node.name.type === 'JSXMemberExpression' &&
+            node.name.property?.name === 'Fragment') {
+          return;
+        }
+
+        // 检查是否已有 data-jsx-id 属性
+        const hasJsxId = node.attributes.some(attr =>
+          attr.type === 'JSXAttribute' &&
+          attr.name?.name === 'data-jsx-id'
+        );
+        if (hasJsxId) return;
+
+        // 生成唯一 ID: 文件ID-行号-列号
+        const fileId = getFileId(filename);
+        const line = node.loc?.start?.line || 0;
+        const col = node.loc?.start?.column || 0;
+        const jsxId = \`\${fileId}-\${line}-\${col}\`;
+
+        // 创建 data-jsx-id 属性
+        const jsxIdAttr = {
+          type: 'JSXAttribute',
+          name: {
+            type: 'JSXIdentifier',
+            name: 'data-jsx-id',
+          },
+          value: {
+            type: 'StringLiteral',
+            value: jsxId,
+          },
+        };
+
+        // 添加属性到元素
+        node.attributes.push(jsxIdAttr);
+      },
+    },
+  };
+}
 `;
 }
 
