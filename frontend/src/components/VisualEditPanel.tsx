@@ -14,6 +14,13 @@ interface SelectedElementInfo {
 interface VisualEditPanelProps {
   selectedElement: SelectedElementInfo | null;
   onUpdateElement?: (jsxId: string, updates: ElementUpdate) => void;
+  onSave?: (jsxId: string, changes: SavedChanges) => void;
+  isSaving?: boolean;
+}
+
+interface SavedChanges {
+  textContent?: string;
+  styles?: Record<string, string>;
 }
 
 interface ElementUpdate {
@@ -170,7 +177,7 @@ function SpacingControl({
   );
 }
 
-function VisualEditPanel({ selectedElement, onUpdateElement }: VisualEditPanelProps) {
+function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }: VisualEditPanelProps) {
   const [textContent, setTextContent] = useState('');
   const [textColor, setTextColor] = useState('');
   const [bgColor, setBgColor] = useState('');
@@ -179,36 +186,95 @@ function VisualEditPanel({ selectedElement, onUpdateElement }: VisualEditPanelPr
   const [textAlign, setTextAlign] = useState('left');
   const [margin, setMargin] = useState({ top: '', right: '', bottom: '', left: '' });
   const [padding, setPadding] = useState({ top: '', right: '', bottom: '', left: '' });
+  const [hasChanges, setHasChanges] = useState(false);
+  const [originalText, setOriginalText] = useState('');
+
+  // 存储原始值用于比较
+  const [originalValues, setOriginalValues] = useState<{
+    textContent: string;
+    textColor: string;
+    bgColor: string;
+    fontSize: string;
+    fontWeight: string;
+    textAlign: string;
+    margin: { top: string; right: string; bottom: string; left: string };
+    padding: { top: string; right: string; bottom: string; left: string };
+  } | null>(null);
 
   // 解析计算样式
   useEffect(() => {
     if (selectedElement) {
-      setTextContent(selectedElement.textContent || '');
+      const text = selectedElement.textContent || '';
+      setTextContent(text);
+      setOriginalText(text);
 
       const styles = selectedElement.computedStyles || {};
-      setTextColor(styles.color || '');
-      setBgColor(styles.backgroundColor || '');
-      setFontSize(styles.fontSize || '');
-      setFontWeight(styles.fontWeight || '');
-      setTextAlign(styles.textAlign || 'left');
+      const color = styles.color || '';
+      const bg = styles.backgroundColor || '';
+      const fSize = styles.fontSize || '';
+      const fWeight = styles.fontWeight || '';
+      const tAlign = styles.textAlign || 'left';
+
+      setTextColor(color);
+      setBgColor(bg);
+      setFontSize(fSize);
+      setFontWeight(fWeight);
+      setTextAlign(tAlign);
 
       // 解析 margin
-      setMargin({
+      const marginValues = {
         top: styles.marginTop || '',
         right: styles.marginRight || '',
         bottom: styles.marginBottom || '',
         left: styles.marginLeft || '',
-      });
+      };
+      setMargin(marginValues);
 
       // 解析 padding
-      setPadding({
+      const paddingValues = {
         top: styles.paddingTop || '',
         right: styles.paddingRight || '',
         bottom: styles.paddingBottom || '',
         left: styles.paddingLeft || '',
+      };
+      setPadding(paddingValues);
+
+      // 存储原始值
+      setOriginalValues({
+        textContent: text,
+        textColor: color,
+        bgColor: bg,
+        fontSize: fSize,
+        fontWeight: fWeight,
+        textAlign: tAlign,
+        margin: marginValues,
+        padding: paddingValues,
       });
+
+      // 重置变更状态
+      setHasChanges(false);
     }
   }, [selectedElement]);
+
+  // 检查是否有变更
+  const checkHasChanges = useCallback(() => {
+    if (!originalValues) return false;
+    return (
+      textContent !== originalValues.textContent ||
+      textColor !== originalValues.textColor ||
+      bgColor !== originalValues.bgColor ||
+      fontSize !== originalValues.fontSize ||
+      fontWeight !== originalValues.fontWeight ||
+      textAlign !== originalValues.textAlign ||
+      JSON.stringify(margin) !== JSON.stringify(originalValues.margin) ||
+      JSON.stringify(padding) !== JSON.stringify(originalValues.padding)
+    );
+  }, [originalValues, textContent, textColor, bgColor, fontSize, fontWeight, textAlign, margin, padding]);
+
+  // 更新 hasChanges 状态
+  useEffect(() => {
+    setHasChanges(checkHasChanges());
+  }, [checkHasChanges]);
 
   const handleTextChange = useCallback((value: string) => {
     setTextContent(value);
@@ -226,6 +292,42 @@ function VisualEditPanel({ selectedElement, onUpdateElement }: VisualEditPanelPr
     }
   }, [selectedElement, onUpdateElement]);
 
+  // 保存变更
+  const handleSave = useCallback(() => {
+    if (!selectedElement || !onSave || !hasChanges) return;
+
+    const changes: SavedChanges = {};
+
+    // 文本变更
+    if (originalValues && textContent !== originalValues.textContent) {
+      changes.textContent = textContent;
+    }
+
+    // 样式变更
+    const styleChanges: Record<string, string> = {};
+    if (originalValues) {
+      if (textColor !== originalValues.textColor) styleChanges.color = textColor;
+      if (bgColor !== originalValues.bgColor) styleChanges.backgroundColor = bgColor;
+      if (fontSize !== originalValues.fontSize) styleChanges.fontSize = fontSize;
+      if (fontWeight !== originalValues.fontWeight) styleChanges.fontWeight = fontWeight;
+      if (textAlign !== originalValues.textAlign) styleChanges.textAlign = textAlign;
+      if (margin.top !== originalValues.margin.top) styleChanges.marginTop = margin.top;
+      if (margin.right !== originalValues.margin.right) styleChanges.marginRight = margin.right;
+      if (margin.bottom !== originalValues.margin.bottom) styleChanges.marginBottom = margin.bottom;
+      if (margin.left !== originalValues.margin.left) styleChanges.marginLeft = margin.left;
+      if (padding.top !== originalValues.padding.top) styleChanges.paddingTop = padding.top;
+      if (padding.right !== originalValues.padding.right) styleChanges.paddingRight = padding.right;
+      if (padding.bottom !== originalValues.padding.bottom) styleChanges.paddingBottom = padding.bottom;
+      if (padding.left !== originalValues.padding.left) styleChanges.paddingLeft = padding.left;
+    }
+
+    if (Object.keys(styleChanges).length > 0) {
+      changes.styles = styleChanges;
+    }
+
+    onSave(selectedElement.jsxId, changes);
+  }, [selectedElement, onSave, hasChanges, originalValues, textContent, textColor, bgColor, fontSize, fontWeight, textAlign, margin, padding]);
+
   if (!selectedElement) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-gray-400 p-6">
@@ -241,6 +343,37 @@ function VisualEditPanel({ selectedElement, onUpdateElement }: VisualEditPanelPr
 
   return (
     <div className="h-full overflow-y-auto">
+      {/* Save 按钮 - 固定在顶部 */}
+      {hasChanges && (
+        <div className="px-4 py-2 bg-blue-50 border-b border-blue-100 flex items-center justify-between sticky top-0 z-10">
+          <span className="text-xs text-blue-600">
+            Unsaved changes
+          </span>
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+          >
+            {isSaving ? (
+              <>
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Saving...
+              </>
+            ) : (
+              <>
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Save
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
       {/* 元素标签 */}
       <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-2">

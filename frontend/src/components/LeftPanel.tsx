@@ -1,8 +1,7 @@
 import { useState, useCallback } from 'react';
 import type { ComponentNode } from '../services/api';
-import ComponentTree from './ComponentTree';
-import PropertyPanel from './PropertyPanel';
 import VisualEditPanel from './VisualEditPanel';
+import ThemePanel from './ThemePanel';
 
 interface SelectedElementInfo {
   jsxId: string;
@@ -27,6 +26,8 @@ interface LeftPanelProps {
   onUpdateElement?: (jsxId: string, updates: { type: string; value: unknown }) => void;
 }
 
+type DesignSection = 'menu' | 'themes' | 'visual-edits';
+
 function LeftPanel({
   viewMode,
   isGenerating,
@@ -34,26 +35,11 @@ function LeftPanel({
   generationPercent,
   onGenerate,
   projectId,
-  onSelectComponent,
   selectedElementFromIframe,
   onUpdateElement,
 }: LeftPanelProps) {
   const [description, setDescription] = useState('');
-  const [designView, setDesignView] = useState<'tree' | 'properties'>('tree');
-  const [selectedComponentFromTree, setSelectedComponentFromTree] = useState<ComponentNode | null>(null);
-  const [treeRefreshKey, setTreeRefreshKey] = useState(0);
-
-  // 处理组件选择（来自组件树）
-  const handleSelectComponent = useCallback((component: ComponentNode) => {
-    setSelectedComponentFromTree(component);
-    setDesignView('properties');
-    onSelectComponent?.(component);
-  }, [onSelectComponent]);
-
-  // 刷新组件树
-  const handleRefreshTree = useCallback(() => {
-    setTreeRefreshKey((k) => k + 1);
-  }, []);
+  const [designSection, setDesignSection] = useState<DesignSection>('menu');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,25 +48,55 @@ function LeftPanel({
     }
   };
 
+  // 返回菜单
+  const handleBackToMenu = useCallback(() => {
+    setDesignSection('menu');
+  }, []);
+
   return (
     <div className="w-96 bg-white border-r border-gray-200 flex flex-col">
       {/* 面板标题 */}
       <div className="px-4 py-3 border-b border-gray-200">
-        <h2 className="font-semibold text-gray-800">
-          {viewMode === 'chat' ? '创建项目' : 'Visual Edit'}
-        </h2>
-        <p className="text-sm text-gray-500 mt-1">
-          {viewMode === 'chat'
-            ? '描述你想要的网站'
-            : '点击页面元素进行编辑'}
-        </p>
+        {viewMode === 'design' && designSection !== 'menu' ? (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleBackToMenu}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <div>
+              <h2 className="font-semibold text-gray-800">
+                {designSection === 'themes' ? 'Themes' : 'Visual Edits'}
+              </h2>
+              <p className="text-sm text-gray-500">
+                {designSection === 'themes'
+                  ? 'Browse and apply themes'
+                  : 'Select elements to edit'}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <h2 className="font-semibold text-gray-800">
+              {viewMode === 'chat' ? 'Create Project' : 'Design'}
+            </h2>
+            <p className="text-sm text-gray-500 mt-1">
+              {viewMode === 'chat'
+                ? 'Describe your website'
+                : 'Customize your project'}
+            </p>
+          </>
+        )}
       </div>
 
       {/* 内容区 */}
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex-1 overflow-auto">
         {viewMode === 'chat' ? (
           /* Chat 模式 - 输入描述 */
-          <div className="h-full flex flex-col">
+          <div className="h-full flex flex-col p-4">
             {isGenerating ? (
               /* 生成中状态 */
               <div className="flex-1 flex flex-col items-center justify-center text-center px-4">
@@ -128,24 +144,24 @@ function LeftPanel({
                 <div className="w-full space-y-2 text-left">
                   <div className={`flex items-center text-sm ${generationPercent >= 10 ? 'text-green-600' : 'text-gray-400'}`}>
                     <span className="mr-2">{generationPercent >= 10 ? '✓' : '○'}</span>
-                    分析需求
+                    Analyzing requirements
                   </div>
                   <div className={`flex items-center text-sm ${generationPercent >= 20 ? 'text-green-600' : generationPercent >= 10 ? 'text-blue-600 animate-pulse' : 'text-gray-400'}`}>
                     <span className="mr-2">{generationPercent >= 60 ? '✓' : generationPercent >= 20 ? '◐' : '○'}</span>
-                    生成代码
+                    Generating code
                   </div>
                   <div className={`flex items-center text-sm ${generationPercent >= 60 ? 'text-green-600' : 'text-gray-400'}`}>
                     <span className="mr-2">{generationPercent >= 60 ? '✓' : '○'}</span>
-                    保存文件
+                    Saving files
                   </div>
                   <div className={`flex items-center text-sm ${generationPercent >= 100 ? 'text-green-600' : generationPercent >= 80 ? 'text-blue-600 animate-pulse' : 'text-gray-400'}`}>
                     <span className="mr-2">{generationPercent >= 100 ? '✓' : generationPercent >= 80 ? '◐' : '○'}</span>
-                    部署到 Fly.io
+                    Deploying to Fly.io
                   </div>
                 </div>
 
                 <p className="text-xs text-gray-400 mt-4">
-                  首次生成可能需要 1-3 分钟
+                  First generation may take 1-3 minutes
                 </p>
               </div>
             ) : (
@@ -153,12 +169,12 @@ function LeftPanel({
               <form onSubmit={handleSubmit} className="flex-1 flex flex-col">
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    项目描述
+                    Project Description
                   </label>
                   <textarea
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="例如：一个现代化的任务管理系统，包含任务列表、添加任务、删除任务功能，使用渐变背景和卡片式设计..."
+                    placeholder="E.g., A modern task management system with task list, add/delete tasks, gradient background and card design..."
                     className="w-full h-40 p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                   />
                 </div>
@@ -168,89 +184,80 @@ function LeftPanel({
                   disabled={!description.trim()}
                   className="mt-4 w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
                 >
-                  生成网站
+                  Generate Website
                 </button>
 
                 {/* 示例提示 */}
                 <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500 font-medium mb-2">示例提示:</p>
+                  <p className="text-xs text-gray-500 font-medium mb-2">Example prompts:</p>
                   <ul className="text-xs text-gray-500 space-y-1">
-                    <li>• "一个产品展示页面，包含导航栏、轮播图、特性介绍"</li>
-                    <li>• "博客首页，显示文章列表、侧边栏、搜索功能"</li>
-                    <li>• "登录注册页面，简洁现代设计"</li>
+                    <li>• "A product showcase page with navbar, carousel, features"</li>
+                    <li>• "Blog homepage with article list, sidebar, search"</li>
+                    <li>• "Login/signup page with clean modern design"</li>
                   </ul>
                 </div>
               </form>
             )}
           </div>
         ) : (
-          /* Design 模式 - Visual Edit */
-          <div className="flex flex-col h-full -m-4">
-            {/* 视图切换标签 */}
-            <div className="flex border-b border-gray-200">
-              <button
-                onClick={() => setDesignView('tree')}
-                className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
-                  designView === 'tree'
-                    ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50/50'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <span className="flex items-center justify-center gap-1.5">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                  </svg>
-                  组件树
-                </span>
-              </button>
-              <button
-                onClick={() => setDesignView('properties')}
-                className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
-                  designView === 'properties'
-                    ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50/50'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <span className="flex items-center justify-center gap-1.5">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-                  </svg>
-                  属性
-                </span>
-              </button>
-            </div>
+          /* Design 模式 - Lovable 风格菜单 */
+          <div className="h-full">
+            {designSection === 'menu' ? (
+              /* 主菜单 - Themes 和 Visual edits */
+              <div className="p-4 space-y-3">
+                {/* Themes Card */}
+                <button
+                  onClick={() => setDesignSection('themes')}
+                  className="w-full p-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-gray-200 transition-colors">
+                      <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-gray-800">Themes</h3>
+                      <p className="text-sm text-gray-500 mt-0.5">Browse and apply themes to your project</p>
+                    </div>
+                    <svg className="w-5 h-5 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </button>
 
-            {/* 组件树视图 */}
-            {designView === 'tree' && projectId && (
-              <div className="flex-1 overflow-hidden">
-                <ComponentTree
-                  key={treeRefreshKey}
-                  projectId={projectId}
-                  selectedComponentId={selectedComponentFromTree?.id}
-                  onSelectComponent={handleSelectComponent}
-                  onRefresh={handleRefreshTree}
-                />
+                {/* Visual Edits Card */}
+                <button
+                  onClick={() => setDesignSection('visual-edits')}
+                  className="w-full p-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-gray-200 transition-colors">
+                      <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-gray-800">Visual edits</h3>
+                      <p className="text-sm text-gray-500 mt-0.5">Select elements to edit and style visually</p>
+                    </div>
+                    <svg className="w-5 h-5 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </button>
               </div>
+            ) : designSection === 'themes' ? (
+              /* Themes Panel */
+              <ThemePanel projectId={projectId} />
+            ) : (
+              /* Visual Edits Panel */
+              <VisualEditPanel
+                selectedElement={selectedElementFromIframe}
+                onUpdateElement={onUpdateElement}
+              />
             )}
-
-            {/* 属性面板视图 */}
-            {designView === 'properties' && projectId && (
-              <div className="flex-1 overflow-hidden flex flex-col">
-                {/* Visual Edit Panel - Lovable 风格的属性编辑面板 */}
-                <VisualEditPanel
-                  selectedElement={selectedElementFromIframe}
-                  onUpdateElement={onUpdateElement}
-                />
-              </div>
-            )}
-
-            {/* 属性面板视图 - 无项目 */}
-            {designView === 'properties' && !projectId && (
-              <div className="flex-1 flex items-center justify-center text-gray-400 p-4">
-                <p className="text-sm">请先创建或选择一个项目</p>
-              </div>
-            )}
-      </div>
+          </div>
         )}
       </div>
     </div>
