@@ -1,0 +1,145 @@
+/**
+ * Visual Editor 类型定义
+ */
+
+/**
+ * 选中元素信息
+ */
+export interface SelectedElementInfo {
+  /** JSX ID */
+  jsxId: string;
+  /** 标签名 */
+  tagName: string;
+  /** className */
+  className: string;
+  /** 直接文本内容 */
+  textContent: string;
+  /** 计算样式 */
+  computedStyles: Record<string, string>;
+  /** 边界矩形 */
+  boundingRect: DOMRect;
+  /** 属性 */
+  attributes: Record<string, string>;
+  /** DOM 路径 (JSX ID 数组) */
+  path: string[];
+}
+
+/**
+ * 更新负载
+ */
+export interface UpdatePayload {
+  /** JSX ID */
+  jsxId: string;
+  /** 更新类型 */
+  type: 'text' | 'className' | 'style' | 'attribute';
+  /** 更新值 */
+  value: unknown;
+}
+
+/**
+ * 编辑动作 (用于撤销/重做)
+ */
+export interface EditAction {
+  /** 动作 ID */
+  id: string;
+  /** 时间戳 */
+  timestamp: number;
+  /** JSX ID */
+  jsxId: string;
+  /** 动作类型 */
+  type: 'text' | 'className' | 'style' | 'attribute';
+  /** 旧值 */
+  oldValue: unknown;
+  /** 新值 */
+  newValue: unknown;
+  /** 文件路径 */
+  filePath?: string;
+}
+
+/**
+ * 消息类型 (父子窗口通信)
+ */
+export type MessageType =
+  | 'ENABLE_EDIT_MODE'
+  | 'DISABLE_EDIT_MODE'
+  | 'UPDATE_ELEMENT'
+  | 'SELECT_BY_JSX_ID'
+  | 'GET_FULL_HTML'
+  | 'HIGHLIGHT_ELEMENT'
+  | 'ELEMENT_SELECTED'
+  | 'ELEMENT_DESELECTED'
+  | 'TEXT_CHANGED'
+  | 'EDIT_MODE_ENABLED'
+  | 'EDIT_MODE_DISABLED'
+  | 'FULL_HTML';
+
+/**
+ * 通信消息
+ */
+export interface EditorMessage {
+  type: MessageType;
+  payload?: unknown;
+}
+
+/**
+ * 样式更新参数
+ */
+export interface StyleUpdatePayload {
+  /** 完全替换 className */
+  className?: string;
+  /** 要添加的类名 */
+  addClasses?: string[];
+  /** 要移除的类名 */
+  removeClasses?: string[];
+  /** 行内样式对象 */
+  style?: Record<string, string>;
+}
+
+/**
+ * 设备视图类型
+ */
+export type DeviceView = 'desktop' | 'tablet' | 'mobile';
+
+/**
+ * 设备视图配置
+ */
+export interface DeviceViewConfig {
+  name: string;
+  width: number;
+  height?: number;
+  icon: string;
+}
+
+/**
+ * 设备视图预设
+ */
+export const DEVICE_VIEWS: Record<DeviceView, DeviceViewConfig> = {
+  desktop: { name: '桌面', width: 1280, icon: '🖥️' },
+  tablet: { name: '平板', width: 768, icon: '📱' },
+  mobile: { name: '手机', width: 375, icon: '📲' },
+};
+
+/**
+ * 属性面板标签页 ID
+ */
+export type PropertyTabId = 'style' | 'layout' | 'spacing' | 'effects' | 'attributes';
+
+/**
+ * 标签页配置
+ */
+export interface TabConfig {
+  id: PropertyTabId;
+  label: string;
+  icon: string;
+}
+
+/**
+ * 属性面板标签页配置
+ */
+export const PROPERTY_TABS: TabConfig[] = [
+  { id: 'style', label: '样式', icon: '🎨' },
+  { id: 'layout', label: '布局', icon: '📐' },
+  { id: 'spacing', label: '间距', icon: '↔️' },
+  { id: 'effects', label: '效果', icon: '✨' },
+  { id: 'attributes', label: '属性', icon: '⚙️' },
+];
