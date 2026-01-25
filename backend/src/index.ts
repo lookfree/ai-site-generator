@@ -6,6 +6,8 @@ import { checkClaudeAvailable } from './services/claude';
 import { healthCheck as flyHealthCheck, getPreviewUrl } from './services/flyio';
 import projectsRouter from './routes/projects';
 import proxyRouter from './routes/proxy';
+import codeRouter from './routes/code';
+import codeEditorRouter from './routes/code-editor';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -44,6 +46,8 @@ app.get('/api/health', async (req, res) => {
 // 路由
 app.use('/api/projects', projectsRouter);
 app.use('/api/proxy', proxyRouter);
+app.use('/api/code', codeRouter);
+app.use('/api/code-editor', codeEditorRouter);
 
 // 错误处理
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {

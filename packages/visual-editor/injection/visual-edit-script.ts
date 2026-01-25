@@ -1,6 +1,6 @@
 /**
  * Visual Edit 注入脚本
- * 在 iframe 中运行，处理元素选择和高亮
+ * 在 iframe 中运行，处理元素选择、高亮和拖拽编辑
  */
 
 interface SelectedElementInfo {
@@ -25,6 +25,16 @@ interface AttributeUpdate {
   value: string | null;
 }
 
+interface ResizeInfo {
+  jsxId: string;
+  width: number;
+  height: number;
+  originalWidth: number;
+  originalHeight: number;
+}
+
+type ResizeHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
 /**
  * Visual Edit 控制器
  */
@@ -33,7 +43,12 @@ class VisualEditController {
   private hoveredElement: HTMLElement | null = null;
   private highlightOverlay: HTMLElement | null = null;
   private hoverOverlay: HTMLElement | null = null;
+  private resizeHandles: Map<ResizeHandle, HTMLElement> = new Map();
   private isEditMode = false;
+  private isResizing = false;
+  private resizeHandle: ResizeHandle | null = null;
+  private dragStartPos = { x: 0, y: 0 };
+  private originalRect: DOMRect | null = null;
 
   constructor() {
     this.init();
@@ -41,8 +56,10 @@ class VisualEditController {
 
   private init(): void {
     this.createOverlays();
+    this.createResizeHandles();
     this.setupEventListeners();
     this.setupMessageHandler();
+    this.setupResizeListeners();
   }
 
   // ========== 覆盖层管理 ==========
@@ -76,6 +93,229 @@ class VisualEditController {
 
     document.body.appendChild(this.highlightOverlay);
     document.body.appendChild(this.hoverOverlay);
+  }
+
+  private createResizeHandles(): void {
+    const handles: ResizeHandle[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+    const handleContainer = document.createElement('div');
+    handleContainer.id = '__visual_edit_handles__';
+    handleContainer.style.cssText = `
+      position: fixed;
+      pointer-events: none;
+      z-index: 999999;
+      display: none;
+    `;
+
+    handles.forEach((handle) => {
+      const el = document.createElement('div');
+      el.dataset.handle = handle;
+      el.style.cssText = `
+        position: absolute;
+        width: 8px;
+        height: 8px;
+        background: #3b82f6;
+        border: 1px solid white;
+        border-radius: 2px;
+        pointer-events: auto;
+        cursor: ${this.getCursorForHandle(handle)};
+      `;
+      this.positionHandle(el, handle);
+      handleContainer.appendChild(el);
+      this.resizeHandles.set(handle, el);
+    });
+
+    document.body.appendChild(handleContainer);
+  }
+
+  private getCursorForHandle(handle: ResizeHandle): string {
+    const cursors: Record<ResizeHandle, string> = {
+      n: 'ns-resize',
+      s: 'ns-resize',
+      e: 'ew-resize',
+      w: 'ew-resize',
+      ne: 'nesw-resize',
+      sw: 'nesw-resize',
+      nw: 'nwse-resize',
+      se: 'nwse-resize',
+    };
+    return cursors[handle];
+  }
+
+  private positionHandle(el: HTMLElement, handle: ResizeHandle): void {
+    switch (handle) {
+      case 'n':
+        el.style.top = '-4px';
+        el.style.left = '50%';
+        el.style.transform = 'translateX(-50%)';
+        break;
+      case 's':
+        el.style.bottom = '-4px';
+        el.style.left = '50%';
+        el.style.transform = 'translateX(-50%)';
+        break;
+      case 'e':
+        el.style.right = '-4px';
+        el.style.top = '50%';
+        el.style.transform = 'translateY(-50%)';
+        break;
+      case 'w':
+        el.style.left = '-4px';
+        el.style.top = '50%';
+        el.style.transform = 'translateY(-50%)';
+        break;
+      case 'ne':
+        el.style.top = '-4px';
+        el.style.right = '-4px';
+        break;
+      case 'nw':
+        el.style.top = '-4px';
+        el.style.left = '-4px';
+        break;
+      case 'se':
+        el.style.bottom = '-4px';
+        el.style.right = '-4px';
+        break;
+      case 'sw':
+        el.style.bottom = '-4px';
+        el.style.left = '-4px';
+        break;
+    }
+  }
+
+  private updateResizeHandles(): void {
+    const container = document.getElementById('__visual_edit_handles__');
+    if (!container) return;
+
+    if (!this.selectedElement || !this.isEditMode) {
+      container.style.display = 'none';
+      return;
+    }
+
+    const rect = this.selectedElement.getBoundingClientRect();
+    container.style.display = 'block';
+    container.style.top = `${rect.top}px`;
+    container.style.left = `${rect.left}px`;
+    container.style.width = `${rect.width}px`;
+    container.style.height = `${rect.height}px`;
+  }
+
+  private setupResizeListeners(): void {
+    // Handle mousedown on resize handles
+    document.addEventListener('mousedown', (e) => {
+      const target = e.target as HTMLElement;
+      if (target.dataset.handle && this.selectedElement) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.startResize(target.dataset.handle as ResizeHandle, e);
+      }
+    });
+
+    // Handle mousemove for resizing
+    document.addEventListener('mousemove', (e) => {
+      if (this.isResizing && this.selectedElement && this.resizeHandle) {
+        this.handleResize(e);
+      }
+    });
+
+    // Handle mouseup to end resize
+    document.addEventListener('mouseup', () => {
+      if (this.isResizing) {
+        this.endResize();
+      }
+    });
+  }
+
+  private startResize(handle: ResizeHandle, e: MouseEvent): void {
+    this.isResizing = true;
+    this.resizeHandle = handle;
+    this.dragStartPos = { x: e.clientX, y: e.clientY };
+    this.originalRect = this.selectedElement!.getBoundingClientRect();
+    document.body.style.cursor = this.getCursorForHandle(handle);
+    document.body.style.userSelect = 'none';
+  }
+
+  private handleResize(e: MouseEvent): void {
+    if (!this.selectedElement || !this.originalRect || !this.resizeHandle) return;
+
+    const deltaX = e.clientX - this.dragStartPos.x;
+    const deltaY = e.clientY - this.dragStartPos.y;
+
+    let newWidth = this.originalRect.width;
+    let newHeight = this.originalRect.height;
+
+    // Calculate new dimensions based on handle
+    switch (this.resizeHandle) {
+      case 'e':
+      case 'ne':
+      case 'se':
+        newWidth = this.originalRect.width + deltaX;
+        break;
+      case 'w':
+      case 'nw':
+      case 'sw':
+        newWidth = this.originalRect.width - deltaX;
+        break;
+    }
+
+    switch (this.resizeHandle) {
+      case 's':
+      case 'se':
+      case 'sw':
+        newHeight = this.originalRect.height + deltaY;
+        break;
+      case 'n':
+      case 'ne':
+      case 'nw':
+        newHeight = this.originalRect.height - deltaY;
+        break;
+    }
+
+    // Apply minimum size
+    newWidth = Math.max(20, newWidth);
+    newHeight = Math.max(20, newHeight);
+
+    // Apply temporary styles for preview
+    this.selectedElement.style.width = `${newWidth}px`;
+    this.selectedElement.style.height = `${newHeight}px`;
+
+    // Update overlays
+    this.updateHighlight(this.selectedElement, this.highlightOverlay!);
+    this.updateResizeHandles();
+
+    // Send resize event for live preview
+    this.postMessage('ELEMENT_RESIZING', {
+      jsxId: this.selectedElement.getAttribute('data-jsx-id'),
+      width: Math.round(newWidth),
+      height: Math.round(newHeight),
+      originalWidth: Math.round(this.originalRect.width),
+      originalHeight: Math.round(this.originalRect.height),
+    } as ResizeInfo);
+  }
+
+  private endResize(): void {
+    if (!this.selectedElement || !this.originalRect) {
+      this.isResizing = false;
+      this.resizeHandle = null;
+      return;
+    }
+
+    const currentRect = this.selectedElement.getBoundingClientRect();
+
+    // Send final resize event
+    this.postMessage('ELEMENT_RESIZED', {
+      jsxId: this.selectedElement.getAttribute('data-jsx-id'),
+      width: Math.round(currentRect.width),
+      height: Math.round(currentRect.height),
+      originalWidth: Math.round(this.originalRect.width),
+      originalHeight: Math.round(this.originalRect.height),
+    } as ResizeInfo);
+
+    // Reset state
+    this.isResizing = false;
+    this.resizeHandle = null;
+    this.originalRect = null;
+    document.body.style.cursor = 'crosshair';
+    document.body.style.userSelect = '';
   }
 
   private updateHighlight(element: HTMLElement | null, overlay: HTMLElement): void {
@@ -144,6 +384,7 @@ class VisualEditController {
     window.addEventListener('scroll', () => {
       if (this.selectedElement) {
         this.updateHighlight(this.selectedElement, this.highlightOverlay!);
+        this.updateResizeHandles();
       }
     }, true);
 
@@ -151,6 +392,7 @@ class VisualEditController {
     window.addEventListener('resize', () => {
       if (this.selectedElement) {
         this.updateHighlight(this.selectedElement, this.highlightOverlay!);
+        this.updateResizeHandles();
       }
     });
   }
@@ -208,6 +450,7 @@ class VisualEditController {
   private selectElement(element: HTMLElement): void {
     this.selectedElement = element;
     this.updateHighlight(element, this.highlightOverlay!);
+    this.updateResizeHandles();
 
     // 发送选中信息到父窗口
     const info = this.extractElementInfo(element);
@@ -225,6 +468,7 @@ class VisualEditController {
   private deselectElement(): void {
     this.selectedElement = null;
     this.updateHighlight(null, this.highlightOverlay!);
+    this.updateResizeHandles();
     this.postMessage('ELEMENT_DESELECTED', null);
   }
 

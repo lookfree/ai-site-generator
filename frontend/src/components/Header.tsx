@@ -2,11 +2,11 @@ interface HeaderProps {
   projectName: string;
   viewMode: 'chat' | 'design';
   onViewModeChange: (mode: 'chat' | 'design') => void;
-  hasProject: boolean;
+  hasProject?: boolean;
   onShowProjectList: () => void;
 }
 
-function Header({ projectName, viewMode, onViewModeChange, hasProject, onShowProjectList }: HeaderProps) {
+function Header({ projectName, viewMode, onViewModeChange, onShowProjectList }: HeaderProps) {
   return (
     <header className="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between">
       {/* 左侧 Logo 和项目名 */}

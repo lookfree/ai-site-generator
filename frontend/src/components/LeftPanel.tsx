@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import type { SelectedElement } from '../services/api';
+import { useState, useCallback } from 'react';
+import type { ComponentNode } from '../services/api';
+import ComponentTree from './ComponentTree';
+import PropertyPanel from './PropertyPanel';
 
 interface LeftPanelProps {
   viewMode: 'chat' | 'design';
@@ -7,16 +9,8 @@ interface LeftPanelProps {
   generationStatus: string;
   generationPercent: number;
   onGenerate: (description: string) => void;
-  selectedElement: SelectedElement | null;
-  onElementUpdate: (property: string, value: string, oldValue: string) => void;
-  onClearSelection: () => void;
-  onSaveChanges: () => void;
-  isSaving: boolean;
-  canUndo: boolean;
-  canRedo: boolean;
-  onUndo: () => void;
-  onRedo: () => void;
-  editFormKey?: number;
+  projectId?: string;
+  onSelectComponent?: (component: ComponentNode) => void;
 }
 
 function LeftPanel({
@@ -25,30 +19,31 @@ function LeftPanel({
   generationStatus,
   generationPercent,
   onGenerate,
-  selectedElement,
-  onElementUpdate,
-  onClearSelection,
-  onSaveChanges,
-  isSaving,
-  canUndo,
-  canRedo,
-  onUndo,
-  onRedo,
-  editFormKey = 0,
+  projectId,
+  onSelectComponent,
 }: LeftPanelProps) {
   const [description, setDescription] = useState('');
-  const [activeTab, setActiveTab] = useState<'basic' | 'spacing' | 'effects'>('basic');
+  const [designView, setDesignView] = useState<'tree' | 'properties'>('tree');
+  const [selectedComponentFromTree, setSelectedComponentFromTree] = useState<ComponentNode | null>(null);
+  const [treeRefreshKey, setTreeRefreshKey] = useState(0);
+
+  // 处理组件选择（来自组件树）
+  const handleSelectComponent = useCallback((component: ComponentNode) => {
+    setSelectedComponentFromTree(component);
+    setDesignView('properties');
+    onSelectComponent?.(component);
+  }, [onSelectComponent]);
+
+  // 刷新组件树
+  const handleRefreshTree = useCallback(() => {
+    setTreeRefreshKey((k) => k + 1);
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (description.trim() && !isGenerating) {
       onGenerate(description.trim());
     }
-  };
-
-  // 处理样式更新，包含旧值用于历史记录
-  const handleStyleUpdate = (property: string, newValue: string, oldValue: string) => {
-    onElementUpdate(property, newValue, oldValue);
   };
 
   return (
@@ -174,316 +169,76 @@ function LeftPanel({
           </div>
         ) : (
           /* Design 模式 - Visual Edit */
-          <div className="space-y-4">
-            {/* 撤销/重做按钮 */}
-            <div className="flex gap-2 mb-4">
+          <div className="flex flex-col h-full -m-4">
+            {/* 视图切换标签 */}
+            <div className="flex border-b border-gray-200">
               <button
-                onClick={onUndo}
-                disabled={!canUndo}
-                className="flex-1 flex items-center justify-center gap-2 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
-                title="撤销 (Ctrl+Z)"
+                onClick={() => setDesignView('tree')}
+                className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
+                  designView === 'tree'
+                    ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50/50'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                </svg>
-                撤销
+                <span className="flex items-center justify-center gap-1.5">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                  </svg>
+                  组件树
+                </span>
               </button>
               <button
-                onClick={onRedo}
-                disabled={!canRedo}
-                className="flex-1 flex items-center justify-center gap-2 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
-                title="重做 (Ctrl+Y)"
+                onClick={() => setDesignView('properties')}
+                className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
+                  designView === 'properties'
+                    ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50/50'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6" />
-                </svg>
-                重做
+                <span className="flex items-center justify-center gap-1.5">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                  </svg>
+                  属性
+                </span>
               </button>
             </div>
 
-            {/* Visual edits 区域 */}
-            <div className="text-center py-4">
-              {selectedElement ? (
-                <div key={`${selectedElement.selector}-${editFormKey}`} className="text-left space-y-4">
-                  {/* 选中元素信息 */}
-                  <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
-                    <p className="text-sm font-medium text-purple-800">
-                      已选中: {selectedElement.tagName}
-                    </p>
-                    <p className="text-xs text-purple-600 mt-1 truncate">
-                      {selectedElement.selector}
-                    </p>
-                  </div>
-
-                  {/* 样式标签页 */}
-                  <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-                    <button
-                      onClick={() => setActiveTab('basic')}
-                      className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-colors ${
-                        activeTab === 'basic'
-                          ? 'bg-white shadow text-gray-800'
-                          : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      基础
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('spacing')}
-                      className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-colors ${
-                        activeTab === 'spacing'
-                          ? 'bg-white shadow text-gray-800'
-                          : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      间距
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('effects')}
-                      className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-colors ${
-                        activeTab === 'effects'
-                          ? 'bg-white shadow text-gray-800'
-                          : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      效果
-                    </button>
-                  </div>
-
-                  {/* 基础样式 */}
-                  {activeTab === 'basic' && (
-                    <div className="space-y-4">
-                      {/* 文本编辑 */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          文本内容
-                        </label>
-                        <textarea
-                          defaultValue={selectedElement.textContent}
-                          onChange={(e) => handleStyleUpdate('textContent', e.target.value, selectedElement.textContent)}
-                          className="w-full h-20 p-2 border border-gray-300 rounded-lg text-sm resize-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                        />
-                      </div>
-
-                      {/* 颜色编辑 */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            文字颜色
-                          </label>
-                          <input
-                            type="color"
-                            defaultValue={rgbToHex(selectedElement.styles.color)}
-                            onChange={(e) => handleStyleUpdate('color', e.target.value, selectedElement.styles.color)}
-                            className="w-full h-10 rounded border border-gray-300 cursor-pointer"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            背景颜色
-                          </label>
-                          <input
-                            type="color"
-                            defaultValue={rgbToHex(selectedElement.styles.backgroundColor)}
-                            onChange={(e) => handleStyleUpdate('backgroundColor', e.target.value, selectedElement.styles.backgroundColor)}
-                            className="w-full h-10 rounded border border-gray-300 cursor-pointer"
-                          />
-                        </div>
-                      </div>
-
-                      {/* 字体设置 */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            字体大小
-                          </label>
-                          <input
-                            type="text"
-                            defaultValue={selectedElement.styles.fontSize}
-                            onChange={(e) => handleStyleUpdate('fontSize', e.target.value, selectedElement.styles.fontSize)}
-                            placeholder="16px"
-                            className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            字体粗细
-                          </label>
-                          <select
-                            defaultValue={selectedElement.styles.fontWeight}
-                            onChange={(e) => handleStyleUpdate('fontWeight', e.target.value, selectedElement.styles.fontWeight)}
-                            className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
-                          >
-                            <option value="100">100 - Thin</option>
-                            <option value="200">200 - ExtraLight</option>
-                            <option value="300">300 - Light</option>
-                            <option value="400">400 - Normal</option>
-                            <option value="500">500 - Medium</option>
-                            <option value="600">600 - SemiBold</option>
-                            <option value="700">700 - Bold</option>
-                            <option value="800">800 - ExtraBold</option>
-                            <option value="900">900 - Black</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 间距样式 */}
-                  {activeTab === 'spacing' && (
-                    <div className="space-y-4">
-                      {/* Padding */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          内边距 (Padding)
-                        </label>
-                        <input
-                          type="text"
-                          defaultValue={selectedElement.styles.padding}
-                          onChange={(e) => handleStyleUpdate('padding', e.target.value, selectedElement.styles.padding)}
-                          placeholder="10px 或 10px 20px"
-                          className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
-                        />
-                        <p className="text-xs text-gray-400 mt-1">支持: 10px, 10px 20px, 10px 20px 30px 40px</p>
-                      </div>
-
-                      {/* Margin */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          外边距 (Margin)
-                        </label>
-                        <input
-                          type="text"
-                          defaultValue={selectedElement.styles.margin}
-                          onChange={(e) => handleStyleUpdate('margin', e.target.value, selectedElement.styles.margin)}
-                          placeholder="10px 或 auto"
-                          className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
-                        />
-                        <p className="text-xs text-gray-400 mt-1">支持: 10px, auto, 10px auto</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 效果样式 */}
-                  {activeTab === 'effects' && (
-                    <div className="space-y-4">
-                      {/* Border Radius */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          圆角 (Border Radius)
-                        </label>
-                        <input
-                          type="text"
-                          defaultValue={selectedElement.styles.borderRadius}
-                          onChange={(e) => handleStyleUpdate('borderRadius', e.target.value, selectedElement.styles.borderRadius)}
-                          placeholder="8px 或 50%"
-                          className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
-                        />
-                      </div>
-
-                      {/* 预设圆角 */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          快速圆角
-                        </label>
-                        <div className="grid grid-cols-4 gap-2">
-                          {['0px', '4px', '8px', '16px', '24px', '9999px'].map((radius) => (
-                            <button
-                              key={radius}
-                              onClick={() => handleStyleUpdate('borderRadius', radius, selectedElement.styles.borderRadius)}
-                              className="px-2 py-1.5 text-xs border border-gray-300 rounded hover:bg-purple-50 hover:border-purple-300 transition-colors"
-                            >
-                              {radius === '9999px' ? '圆形' : radius}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 操作按钮 */}
-                  <div className="flex gap-2 pt-4 border-t border-gray-200">
-                    <button
-                      onClick={onClearSelection}
-                      className="flex-1 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm hover:bg-gray-200 transition-colors"
-                    >
-                      清除选择
-                    </button>
-                    <button
-                      onClick={onSaveChanges}
-                      disabled={isSaving}
-                      className="flex-1 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 disabled:bg-purple-300 transition-colors"
-                    >
-                      {isSaving ? '保存中...' : '保存修改'}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {/* 未选中状态 */}
-                  <div className="flex justify-center mb-4">
-                    <svg className="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
-                    </svg>
-                  </div>
-                  <h3 className="text-lg font-semibold text-gray-800 mb-2">Visual edits</h3>
-                  <p className="text-gray-600">Select an element to edit it</p>
-                  <p className="text-sm text-gray-400 mt-2">
-                    Hold <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono">Cmd</kbd> to select multiple elements
-                  </p>
-                </>
-              )}
-            </div>
-
-            {/* 分隔线 */}
-            <div className="border-t border-gray-200" />
-
-            {/* Themes 区域 */}
-            <div>
-              <h4 className="text-sm font-semibold text-gray-700 mb-3 px-1">Themes</h4>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { name: 'Default', primary: '#3b82f6', secondary: '#e5e7eb' },
-                  { name: 'Ocean', primary: '#0891b2', secondary: '#cffafe' },
-                  { name: 'Forest', primary: '#16a34a', secondary: '#dcfce7' },
-                  { name: 'Sunset', primary: '#ea580c', secondary: '#ffedd5' },
-                  { name: 'Purple', primary: '#9333ea', secondary: '#f3e8ff' },
-                  { name: 'Rose', primary: '#e11d48', secondary: '#ffe4e6' },
-                ].map((theme) => (
-                  <button
-                    key={theme.name}
-                    className="flex items-center gap-2 p-2 rounded-lg border border-gray-200 hover:border-purple-300 hover:bg-purple-50 transition-colors"
-                    onClick={() => {
-                      console.log('Apply theme:', theme.name);
-                    }}
-                  >
-                    <div
-                      className="w-6 h-6 rounded-full border border-gray-200"
-                      style={{ background: `linear-gradient(135deg, ${theme.primary} 50%, ${theme.secondary} 50%)` }}
-                    />
-                    <span className="text-sm text-gray-700">{theme.name}</span>
-                  </button>
-                ))}
+            {/* 组件树视图 */}
+            {designView === 'tree' && projectId && (
+              <div className="flex-1 overflow-hidden">
+                <ComponentTree
+                  key={treeRefreshKey}
+                  projectId={projectId}
+                  selectedComponentId={selectedComponentFromTree?.id}
+                  onSelectComponent={handleSelectComponent}
+                  onRefresh={handleRefreshTree}
+                />
               </div>
-            </div>
-          </div>
+            )}
+
+            {/* 属性面板视图 - AST 驱动 */}
+            {designView === 'properties' && projectId && (
+              <div className="flex-1 overflow-hidden">
+                <PropertyPanel
+                  projectId={projectId}
+                  selectedComponent={selectedComponentFromTree}
+                  onRefresh={handleRefreshTree}
+                />
+              </div>
+            )}
+
+            {/* 属性面板视图 - 无项目 */}
+            {designView === 'properties' && !projectId && (
+              <div className="flex-1 flex items-center justify-center text-gray-400 p-4">
+                <p className="text-sm">请先创建或选择一个项目</p>
+              </div>
+            )}
+      </div>
         )}
       </div>
     </div>
   );
-}
-
-// RGB 转 Hex 辅助函数
-function rgbToHex(rgb: string): string {
-  if (rgb.startsWith('#')) return rgb;
-  if (rgb === 'transparent' || rgb === 'rgba(0, 0, 0, 0)') return '#ffffff';
-
-  const match = rgb.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  if (!match) return '#ffffff';
-
-  const r = parseInt(match[1]).toString(16).padStart(2, '0');
-  const g = parseInt(match[2]).toString(16).padStart(2, '0');
-  const b = parseInt(match[3]).toString(16).padStart(2, '0');
-  return `#${r}${g}${b}`;
 }
 
 export default LeftPanel;

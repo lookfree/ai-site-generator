@@ -3,25 +3,18 @@ import Header from './components/Header';
 import LeftPanel from './components/LeftPanel';
 import PreviewFrame from './components/PreviewFrame';
 import ProjectList from './components/ProjectList';
-import { useEditHistory } from './hooks/useEditHistory';
-import { generateProject, getProjectStatus, getProxyPreviewUrl, getProject, getProjects, updateProjectFile, syncToFly, type Project, type SelectedElement, type ProjectStatus, type ProjectStatusResponse } from './services/api';
+import { generateProject, getProjectStatus, getDirectPreviewUrl, getProjects, syncToFly, type Project, type ComponentNode } from './services/api';
 
 type ViewMode = 'chat' | 'design';
 
 function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('chat');
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
-  const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationStatus, setGenerationStatus] = useState<string>('');
   const [generationPercent, setGenerationPercent] = useState<number>(0);
-  const [isSaving, setIsSaving] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showProjectList, setShowProjectList] = useState(false);
-  const [editFormKey, setEditFormKey] = useState(0); // 用于强制刷新编辑表单
-
-  // 编辑历史 Hook
-  const { canUndo, canRedo, addAction, undo, redo, clear: clearHistory } = useEditHistory();
 
   // 加载最近的已部署项目（如果有）
   useEffect(() => {
@@ -40,32 +33,6 @@ function App() {
     loadRecentProject();
   }, []);
 
-  // 监听来自 iframe 的消息
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data.type === 'ELEMENT_SELECTED') {
-        setSelectedElement(event.data.data);
-        setEditFormKey((k) => k + 1); // 刷新编辑表单
-      } else if (event.data.type === 'UPDATE_SUCCESS') {
-        console.log('Element updated:', event.data.selector);
-      } else if (event.data.type === 'INLINE_TEXT_UPDATED') {
-        // 直接在 iframe 中编辑文本后的回调
-        const { selector, oldValue, newValue } = event.data;
-        // 记录到历史
-        addAction({
-          selector,
-          property: 'textContent',
-          oldValue,
-          newValue,
-        });
-        console.log('Inline text updated:', selector, oldValue, '->', newValue);
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [addAction]);
-
   // 当 viewMode 切换时，通知 iframe 启用/禁用编辑模式
   useEffect(() => {
     const iframe = document.querySelector('iframe') as HTMLIFrameElement;
@@ -74,33 +41,15 @@ function App() {
         iframe.contentWindow.postMessage({ type: 'ENABLE_EDIT_MODE' }, '*');
       } else {
         iframe.contentWindow.postMessage({ type: 'DISABLE_EDIT_MODE' }, '*');
-        setSelectedElement(null);
       }
     }
   }, [viewMode]);
-
-  // 键盘快捷键: Ctrl+Z 撤销, Ctrl+Y 重做
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) {
-        e.preventDefault();
-        handleRedo();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [canUndo, canRedo]);
 
   // 生成项目
   const handleGenerate = useCallback(async (description: string) => {
     setIsGenerating(true);
     setGenerationStatus('正在初始化项目...');
     setGenerationPercent(5);
-    clearHistory(); // 清空编辑历史
 
     try {
       const result = await generateProject(description);
@@ -149,132 +98,8 @@ function App() {
       setGenerationPercent(0);
       setIsGenerating(false);
     }
-  }, [clearHistory]);
-
-  // 发送更新到 iframe 并记录历史
-  const handleElementUpdate = useCallback((property: string, value: string, oldValue: string) => {
-    if (!selectedElement) return;
-
-    // 记录到历史
-    addAction({
-      selector: selectedElement.selector,
-      property,
-      oldValue,
-      newValue: value,
-    });
-
-    // 发送到 iframe
-    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
-    if (iframe?.contentWindow) {
-      iframe.contentWindow.postMessage({
-        type: 'UPDATE_ELEMENT',
-        selector: selectedElement.selector,
-        property,
-        value,
-      }, '*');
-    }
-  }, [selectedElement, addAction]);
-
-  // 更新 selectedElement 中的属性值
-  const updateSelectedElementProperty = useCallback((property: string, value: string) => {
-    if (!selectedElement) return;
-
-    setSelectedElement((prev) => {
-      if (!prev) return prev;
-
-      // 如果是文本内容
-      if (property === 'textContent') {
-        return { ...prev, textContent: value };
-      }
-
-      // 如果是样式属性
-      if (property in prev.styles) {
-        return {
-          ...prev,
-          styles: {
-            ...prev.styles,
-            [property]: value,
-          },
-        };
-      }
-
-      return prev;
-    });
-  }, [selectedElement]);
-
-  // 撤销操作
-  const handleUndo = useCallback(() => {
-    const action = undo();
-    if (action) {
-      const iframe = document.querySelector('iframe') as HTMLIFrameElement;
-      if (iframe?.contentWindow) {
-        iframe.contentWindow.postMessage({
-          type: 'UPDATE_ELEMENT',
-          selector: action.selector,
-          property: action.property,
-          value: action.oldValue,
-        }, '*');
-
-        // 同步更新编辑框中的值
-        if (selectedElement && selectedElement.selector === action.selector) {
-          updateSelectedElementProperty(action.property, action.oldValue);
-          // 强制刷新编辑表单
-          setEditFormKey((k) => k + 1);
-        }
-      }
-    }
-  }, [undo, selectedElement, updateSelectedElementProperty]);
-
-  // 重做操作
-  const handleRedo = useCallback(() => {
-    const action = redo();
-    if (action) {
-      const iframe = document.querySelector('iframe') as HTMLIFrameElement;
-      if (iframe?.contentWindow) {
-        iframe.contentWindow.postMessage({
-          type: 'UPDATE_ELEMENT',
-          selector: action.selector,
-          property: action.property,
-          value: action.newValue,
-        }, '*');
-
-        // 同步更新编辑框中的值
-        if (selectedElement && selectedElement.selector === action.selector) {
-          updateSelectedElementProperty(action.property, action.newValue);
-          // 强制刷新编辑表单
-          setEditFormKey((k) => k + 1);
-        }
-      }
-    }
-  }, [redo, selectedElement, updateSelectedElementProperty]);
-
-  // 清除选择
-  const handleClearSelection = useCallback(() => {
-    setSelectedElement(null);
-
-    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
-    if (iframe?.contentWindow) {
-      iframe.contentWindow.postMessage({ type: 'CLEAR_SELECTION' }, '*');
-    }
   }, []);
 
-  // 保存修改到 Fly.io
-  const handleSaveChanges = useCallback(async () => {
-    if (!currentProject) return;
-
-    setIsSaving(true);
-    try {
-      const iframe = document.querySelector('iframe') as HTMLIFrameElement;
-      if (iframe?.contentWindow) {
-        // 请求 iframe 返回完整的 HTML
-        iframe.contentWindow.postMessage({ type: 'GET_FULL_HTML' }, '*');
-      }
-    } catch (error) {
-      console.error('Save failed:', error);
-      console.error('保存失败，请重试');
-      setIsSaving(false);
-    }
-  }, [currentProject]);
 
   // 从数据库同步到 Fly.io
   const handleSyncToFly = useCallback(async () => {
@@ -301,36 +126,15 @@ function App() {
   const handleSelectProject = useCallback((project: Project) => {
     setCurrentProject(project);
     setViewMode('design');
-    setSelectedElement(null);
-    clearHistory();
-  }, [clearHistory]);
+  }, []);
 
-  // 监听 iframe 返回的完整 HTML
-  useEffect(() => {
-    const handleSaveResponse = async (event: MessageEvent) => {
-      if (event.data.type === 'FULL_HTML_RESPONSE' && currentProject) {
-        try {
-          // 保存 HTML 到 Fly.io
-          await updateProjectFile(currentProject.id, 'index.html', event.data.html);
+  // 处理组件树选择
+  const handleSelectComponent = useCallback((component: ComponentNode) => {
+    console.log('Component selected:', component);
+    // TODO: 高亮 iframe 中对应的元素
+    // TODO: 同步到属性面板
+  }, []);
 
-          // 如果有 CSS 修改，也保存
-          if (event.data.css) {
-            await updateProjectFile(currentProject.id, 'style.css', event.data.css);
-          }
-
-          console.log('保存成功！修改已同步到服务器');
-        } catch (error) {
-          console.error('Save failed:', error);
-          console.error('保存失败，请重试');
-        } finally {
-          setIsSaving(false);
-        }
-      }
-    };
-
-    window.addEventListener('message', handleSaveResponse);
-    return () => window.removeEventListener('message', handleSaveResponse);
-  }, [currentProject]);
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -352,16 +156,8 @@ function App() {
           generationStatus={generationStatus}
           generationPercent={generationPercent}
           onGenerate={handleGenerate}
-          selectedElement={selectedElement}
-          onElementUpdate={handleElementUpdate}
-          onClearSelection={handleClearSelection}
-          onSaveChanges={handleSaveChanges}
-          isSaving={isSaving}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          onUndo={handleUndo}
-          onRedo={handleRedo}
-          editFormKey={editFormKey}
+          projectId={currentProject?.id}
+          onSelectComponent={handleSelectComponent}
         />
 
         {/* 右侧预览区 */}
@@ -371,7 +167,7 @@ function App() {
             {currentProject ? (
               <PreviewFrame
                 projectId={currentProject.id}
-                previewUrl={getProxyPreviewUrl(currentProject.id)}
+                previewUrl={currentProject.preview_url || getDirectPreviewUrl(currentProject.id)}
                 editModeEnabled={viewMode === 'design'}
               />
             ) : !isGenerating ? (

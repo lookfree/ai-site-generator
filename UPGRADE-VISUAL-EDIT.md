@@ -1135,23 +1135,1051 @@ generated-project/
 
 #### 1.3 升级 Fly.io 服务器
 
+当前 fly-server 仅提供静态文件服务，需要升级为支持动态 Vite 构建的完整开发服务器。
+
+---
+
+## B. 动态构建 (Fly-Server 升级方案)
+
+### B.1 架构概述
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        动态构建架构 (Fly.io)                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────┐         ┌──────────────────────────────────────┐   │
+│  │   Visual Editor │         │           Fly.io Machine              │   │
+│  │   (Frontend)    │         │  ┌────────────────────────────────┐  │   │
+│  │                 │◄───────►│  │      Fly-Server (Bun)          │  │   │
+│  │  - 编辑面板     │  REST   │  │  ┌──────────────────────────┐  │  │   │
+│  │  - 预览 iframe  │  +WS    │  │  │  Project Manager         │  │  │   │
+│  │  - 代码编辑器   │         │  │  │  - 项目生命周期管理       │  │  │   │
+│  └─────────────────┘         │  │  │  - 依赖安装               │  │  │   │
+│                              │  │  │  - 文件 CRUD              │  │  │   │
+│                              │  │  └──────────────────────────┘  │  │   │
+│                              │  │                                 │  │   │
+│                              │  │  ┌──────────────────────────┐  │  │   │
+│                              │  │  │  Vite Dev Server Pool    │  │  │   │
+│                              │  │  │  - 每项目独立 Vite 进程   │  │  │   │
+│                              │  │  │  - HMR WebSocket 代理    │  │  │   │
+│                              │  │  │  - 热更新推送            │  │  │   │
+│                              │  │  └──────────────────────────┘  │  │   │
+│                              │  │                                 │  │   │
+│                              │  │  ┌──────────────────────────┐  │  │   │
+│                              │  │  │  Volume Storage          │  │  │   │
+│                              │  │  │  /data/projects/{id}/    │  │  │   │
+│                              │  │  │  - 源码文件              │  │  │   │
+│                              │  │  │  - node_modules         │  │  │   │
+│                              │  │  │  - 构建缓存              │  │  │   │
+│                              │  │  └──────────────────────────┘  │  │   │
+│                              │  └────────────────────────────────┘  │   │
+│                              └──────────────────────────────────────┘   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### B.2 项目目录结构
+
+```
+/data/projects/{projectId}/
+├── package.json              # 项目依赖配置
+├── vite.config.ts            # Vite 配置 (含 jsx-tagger 插件)
+├── tailwind.config.js        # Tailwind 配置
+├── postcss.config.js         # PostCSS 配置
+├── tsconfig.json             # TypeScript 配置
+├── index.html                # 入口 HTML
+├── src/
+│   ├── main.tsx              # React 入口
+│   ├── App.tsx               # 根组件
+│   ├── components/           # 组件目录
+│   │   ├── Header.tsx
+│   │   ├── Hero.tsx
+│   │   └── ...
+│   └── styles/
+│       └── globals.css       # Tailwind 全局样式
+├── node_modules/             # 依赖 (懒加载安装)
+└── .vite/                    # Vite 缓存
+```
+
+### B.3 Fly-Server API 设计
+
+```typescript
+// fly-server/src/api/projects.ts
+
+/**
+ * 项目管理 API
+ */
+
+// 创建项目 (AI 生成后调用)
+POST /api/projects
+  Body: {
+    projectId: string;
+    projectName: string;
+    description: string;
+    files: Array<{
+      path: string;      // 相对路径: src/App.tsx
+      content: string;   // 文件内容
+      language: string;  // tsx | ts | css | json
+    }>;
+  }
+  Response: {
+    success: boolean;
+    projectUrl: string;  // https://preview.fly.dev/p/{projectId}/
+    devServerPort: number;
+  }
+
+// 启动 Vite Dev Server
+POST /api/projects/:projectId/dev-server/start
+  Response: {
+    success: boolean;
+    port: number;
+    wsUrl: string;       // HMR WebSocket URL
+  }
+
+// 停止 Vite Dev Server
+POST /api/projects/:projectId/dev-server/stop
+  Response: { success: boolean }
+
+// 获取项目状态
+GET /api/projects/:projectId/status
+  Response: {
+    exists: boolean;
+    devServerRunning: boolean;
+    port?: number;
+    lastActive: string;
+    fileCount: number;
+  }
+
+// 读取源文件
+GET /api/projects/:projectId/files/:filePath
+  Response: {
+    content: string;
+    language: string;
+    lastModified: string;
+  }
+
+// 写入源文件 (触发 HMR)
+PUT /api/projects/:projectId/files/:filePath
+  Body: { content: string }
+  Response: {
+    success: boolean;
+    hmrTriggered: boolean;
+  }
+
+// 批量更新文件
+PATCH /api/projects/:projectId/files
+  Body: {
+    updates: Array<{
+      path: string;
+      content: string;
+      operation: 'create' | 'update' | 'delete';
+    }>;
+  }
+  Response: {
+    success: boolean;
+    updatedFiles: string[];
+  }
+
+// 获取 JSX Source Map
+GET /api/projects/:projectId/jsx-source-map
+  Response: {
+    [jsxId: string]: {
+      file: string;
+      line: number;
+      col: number;
+      component: string;
+    }
+  }
+
+// 生产构建
+POST /api/projects/:projectId/build
+  Response: {
+    success: boolean;
+    buildId: string;
+    outputPath: string;
+  }
+
+// 获取构建状态
+GET /api/projects/:projectId/build/:buildId
+  Response: {
+    status: 'pending' | 'building' | 'success' | 'failed';
+    progress: number;
+    logs: string[];
+    outputUrl?: string;
+  }
+```
+
+### B.4 Vite Dev Server 进程管理
+
+```typescript
+// fly-server/src/services/vite-manager.ts
+
+import { spawn, ChildProcess } from 'child_process';
+import { EventEmitter } from 'events';
+
+interface ViteInstance {
+  projectId: string;
+  port: number;
+  process: ChildProcess;
+  wsPort: number;
+  startedAt: Date;
+  lastActive: Date;
+}
+
+class ViteDevServerManager extends EventEmitter {
+  private instances: Map<string, ViteInstance> = new Map();
+  private portPool: number[] = [];
+  private readonly BASE_PORT = 5200;
+  private readonly MAX_INSTANCES = 20;
+  private readonly IDLE_TIMEOUT = 30 * 60 * 1000; // 30 分钟无活动自动停止
+
+  constructor() {
+    super();
+    // 初始化端口池
+    for (let i = 0; i < this.MAX_INSTANCES; i++) {
+      this.portPool.push(this.BASE_PORT + i);
+    }
+    // 定时清理空闲实例
+    setInterval(() => this.cleanupIdleInstances(), 60 * 1000);
+  }
+
+  async startDevServer(projectId: string, projectPath: string): Promise<ViteInstance> {
+    // 检查是否已运行
+    if (this.instances.has(projectId)) {
+      const instance = this.instances.get(projectId)!;
+      instance.lastActive = new Date();
+      return instance;
+    }
+
+    // 获取可用端口
+    const port = this.allocatePort();
+    if (!port) {
+      throw new Error('No available ports. Max instances reached.');
+    }
+
+    // 启动 Vite Dev Server
+    const process = spawn('bun', ['run', 'vite', '--host', '0.0.0.0', '--port', String(port)], {
+      cwd: projectPath,
+      env: {
+        ...process.env,
+        NODE_ENV: 'development',
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    const instance: ViteInstance = {
+      projectId,
+      port,
+      process,
+      wsPort: port,
+      startedAt: new Date(),
+      lastActive: new Date(),
+    };
+
+    // 监听进程事件
+    process.stdout?.on('data', (data) => {
+      console.log(`[Vite:${projectId}] ${data}`);
+      this.emit('log', { projectId, type: 'stdout', data: data.toString() });
+    });
+
+    process.stderr?.on('data', (data) => {
+      console.error(`[Vite:${projectId}] ${data}`);
+      this.emit('log', { projectId, type: 'stderr', data: data.toString() });
+    });
+
+    process.on('exit', (code) => {
+      console.log(`[Vite:${projectId}] Process exited with code ${code}`);
+      this.releasePort(port);
+      this.instances.delete(projectId);
+      this.emit('exit', { projectId, code });
+    });
+
+    // 等待服务器就绪
+    await this.waitForServerReady(port);
+
+    this.instances.set(projectId, instance);
+    this.emit('started', { projectId, port });
+
+    return instance;
+  }
+
+  async stopDevServer(projectId: string): Promise<void> {
+    const instance = this.instances.get(projectId);
+    if (!instance) return;
+
+    instance.process.kill('SIGTERM');
+
+    // 等待进程退出
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        instance.process.kill('SIGKILL');
+        resolve();
+      }, 5000);
+
+      instance.process.on('exit', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+
+    this.releasePort(instance.port);
+    this.instances.delete(projectId);
+  }
+
+  getDevServerUrl(projectId: string): string | null {
+    const instance = this.instances.get(projectId);
+    if (!instance) return null;
+    return `http://localhost:${instance.port}`;
+  }
+
+  getHmrWebSocketUrl(projectId: string): string | null {
+    const instance = this.instances.get(projectId);
+    if (!instance) return null;
+    return `ws://localhost:${instance.port}/__vite_hmr`;
+  }
+
+  markActive(projectId: string): void {
+    const instance = this.instances.get(projectId);
+    if (instance) {
+      instance.lastActive = new Date();
+    }
+  }
+
+  private allocatePort(): number | null {
+    return this.portPool.shift() || null;
+  }
+
+  private releasePort(port: number): void {
+    if (!this.portPool.includes(port)) {
+      this.portPool.push(port);
+    }
+  }
+
+  private async waitForServerReady(port: number, timeout = 30000): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      try {
+        const response = await fetch(`http://localhost:${port}`, { method: 'HEAD' });
+        if (response.ok) return;
+      } catch {
+        // 服务器尚未就绪
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    throw new Error('Vite server startup timeout');
+  }
+
+  private cleanupIdleInstances(): void {
+    const now = Date.now();
+    for (const [projectId, instance] of this.instances) {
+      if (now - instance.lastActive.getTime() > this.IDLE_TIMEOUT) {
+        console.log(`[Vite:${projectId}] Stopping idle instance`);
+        this.stopDevServer(projectId);
+      }
+    }
+  }
+}
+
+export const viteManager = new ViteDevServerManager();
+```
+
+### B.5 HMR WebSocket 代理
+
+```typescript
+// fly-server/src/services/hmr-proxy.ts
+
+import { WebSocket, WebSocketServer } from 'ws';
+import http from 'http';
+
+interface HmrProxyConfig {
+  server: http.Server;
+  path: string;  // /hmr/:projectId
+}
+
+class HmrWebSocketProxy {
+  private clientConnections: Map<string, Set<WebSocket>> = new Map();
+  private viteConnections: Map<string, WebSocket> = new Map();
+  private wss: WebSocketServer;
+
+  constructor(config: HmrProxyConfig) {
+    this.wss = new WebSocketServer({
+      server: config.server,
+      path: config.path,
+    });
+
+    this.wss.on('connection', (ws, req) => {
+      const projectId = this.extractProjectId(req.url);
+      if (!projectId) {
+        ws.close(1008, 'Missing projectId');
+        return;
+      }
+
+      this.handleClientConnection(projectId, ws);
+    });
+  }
+
+  private extractProjectId(url: string | undefined): string | null {
+    if (!url) return null;
+    const match = url.match(/\/hmr\/([^\/\?]+)/);
+    return match ? match[1] : null;
+  }
+
+  private handleClientConnection(projectId: string, clientWs: WebSocket): void {
+    // 记录客户端连接
+    if (!this.clientConnections.has(projectId)) {
+      this.clientConnections.set(projectId, new Set());
+    }
+    this.clientConnections.get(projectId)!.add(clientWs);
+
+    // 确保连接到 Vite HMR
+    this.ensureViteConnection(projectId);
+
+    // 转发客户端消息到 Vite
+    clientWs.on('message', (data) => {
+      const viteWs = this.viteConnections.get(projectId);
+      if (viteWs && viteWs.readyState === WebSocket.OPEN) {
+        viteWs.send(data);
+      }
+    });
+
+    // 清理断开的连接
+    clientWs.on('close', () => {
+      this.clientConnections.get(projectId)?.delete(clientWs);
+
+      // 如果没有客户端连接，断开 Vite 连接
+      if (this.clientConnections.get(projectId)?.size === 0) {
+        this.viteConnections.get(projectId)?.close();
+        this.viteConnections.delete(projectId);
+      }
+    });
+  }
+
+  private ensureViteConnection(projectId: string): void {
+    if (this.viteConnections.has(projectId)) return;
+
+    const viteWsUrl = viteManager.getHmrWebSocketUrl(projectId);
+    if (!viteWsUrl) return;
+
+    const viteWs = new WebSocket(viteWsUrl);
+
+    viteWs.on('open', () => {
+      console.log(`[HMR Proxy] Connected to Vite for project ${projectId}`);
+    });
+
+    // 转发 Vite 消息到所有客户端
+    viteWs.on('message', (data) => {
+      const clients = this.clientConnections.get(projectId);
+      if (clients) {
+        for (const client of clients) {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(data);
+          }
+        }
+      }
+    });
+
+    viteWs.on('close', () => {
+      console.log(`[HMR Proxy] Disconnected from Vite for project ${projectId}`);
+      this.viteConnections.delete(projectId);
+    });
+
+    viteWs.on('error', (error) => {
+      console.error(`[HMR Proxy] Error for project ${projectId}:`, error);
+    });
+
+    this.viteConnections.set(projectId, viteWs);
+  }
+
+  // 广播 HMR 更新
+  broadcastUpdate(projectId: string, update: any): void {
+    const clients = this.clientConnections.get(projectId);
+    if (!clients) return;
+
+    const message = JSON.stringify(update);
+    for (const client of clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    }
+  }
+}
+
+export { HmrWebSocketProxy };
+```
+
+### B.6 项目脚手架生成
+
+```typescript
+// fly-server/src/services/project-scaffold.ts
+
+import { mkdir, writeFile, exists } from 'fs/promises';
+import { join } from 'path';
+
+interface ProjectConfig {
+  projectId: string;
+  projectName: string;
+  description: string;
+}
+
+interface GeneratedFile {
+  path: string;
+  content: string;
+}
+
+async function generateProjectScaffold(
+  config: ProjectConfig,
+  files: GeneratedFile[]
+): Promise<string> {
+  const projectPath = `/data/projects/${config.projectId}`;
+
+  // 创建项目目录
+  await mkdir(projectPath, { recursive: true });
+  await mkdir(join(projectPath, 'src/components'), { recursive: true });
+  await mkdir(join(projectPath, 'src/styles'), { recursive: true });
+  await mkdir(join(projectPath, 'public'), { recursive: true });
+
+  // 生成配置文件
+  const scaffoldFiles = [
+    {
+      path: 'package.json',
+      content: generatePackageJson(config),
+    },
+    {
+      path: 'vite.config.ts',
+      content: generateViteConfig(config),
+    },
+    {
+      path: 'tsconfig.json',
+      content: generateTsConfig(),
+    },
+    {
+      path: 'tailwind.config.js',
+      content: generateTailwindConfig(),
+    },
+    {
+      path: 'postcss.config.js',
+      content: generatePostCssConfig(),
+    },
+    {
+      path: 'index.html',
+      content: generateIndexHtml(config),
+    },
+    {
+      path: 'src/styles/globals.css',
+      content: generateGlobalsCss(),
+    },
+  ];
+
+  // 写入脚手架文件
+  for (const file of scaffoldFiles) {
+    await writeFile(join(projectPath, file.path), file.content);
+  }
+
+  // 写入 AI 生成的文件
+  for (const file of files) {
+    const filePath = join(projectPath, file.path);
+    await mkdir(join(projectPath, file.path, '..'), { recursive: true });
+    await writeFile(filePath, file.content);
+  }
+
+  return projectPath;
+}
+
+function generatePackageJson(config: ProjectConfig): string {
+  return JSON.stringify({
+    name: config.projectName.toLowerCase().replace(/\s+/g, '-'),
+    version: '0.1.0',
+    type: 'module',
+    scripts: {
+      dev: 'vite',
+      build: 'tsc && vite build',
+      preview: 'vite preview',
+    },
+    dependencies: {
+      react: '^18.2.0',
+      'react-dom': '^18.2.0',
+    },
+    devDependencies: {
+      '@types/react': '^18.2.0',
+      '@types/react-dom': '^18.2.0',
+      '@vitejs/plugin-react': '^4.2.0',
+      autoprefixer: '^10.4.16',
+      postcss: '^8.4.32',
+      tailwindcss: '^3.4.0',
+      typescript: '^5.3.0',
+      vite: '^5.0.0',
+      'vite-plugin-jsx-tagger': 'workspace:*',
+    },
+  }, null, 2);
+}
+
+function generateViteConfig(config: ProjectConfig): string {
+  return `import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';
+
+export default defineConfig({
+  plugins: [
+    jsxTaggerPlugin({
+      idPrefix: '${config.projectId.slice(0, 8)}',
+    }),
+    react(),
+  ],
+  server: {
+    host: '0.0.0.0',
+    hmr: {
+      protocol: 'ws',
+    },
+  },
+});
+`;
+}
+
+function generateTsConfig(): string {
+  return JSON.stringify({
+    compilerOptions: {
+      target: 'ES2020',
+      useDefineForClassFields: true,
+      lib: ['ES2020', 'DOM', 'DOM.Iterable'],
+      module: 'ESNext',
+      skipLibCheck: true,
+      moduleResolution: 'bundler',
+      allowImportingTsExtensions: true,
+      resolveJsonModule: true,
+      isolatedModules: true,
+      noEmit: true,
+      jsx: 'react-jsx',
+      strict: true,
+      noUnusedLocals: true,
+      noUnusedParameters: true,
+      noFallthroughCasesInSwitch: true,
+      paths: {
+        '@/*': ['./src/*'],
+      },
+    },
+    include: ['src'],
+  }, null, 2);
+}
+
+function generateTailwindConfig(): string {
+  return `/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+};
+`;
+}
+
+function generatePostCssConfig(): string {
+  return `export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+`;
+}
+
+function generateIndexHtml(config: ProjectConfig): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="${escapeHtml(config.description)}" />
+    <title>${escapeHtml(config.projectName)}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+`;
+}
+
+function generateGlobalsCss(): string {
+  return `@tailwind base;
+@tailwind components;
+@tailwind utilities;
+`;
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+export { generateProjectScaffold };
+```
+
+### B.7 依赖安装管理
+
+```typescript
+// fly-server/src/services/dependency-manager.ts
+
+import { spawn } from 'child_process';
+import { exists } from 'fs/promises';
+import { join } from 'path';
+
+interface InstallResult {
+  success: boolean;
+  duration: number;
+  logs: string[];
+}
+
+class DependencyManager {
+  private installQueue: Map<string, Promise<InstallResult>> = new Map();
+
+  async ensureDependencies(projectPath: string): Promise<InstallResult> {
+    const nodeModulesPath = join(projectPath, 'node_modules');
+
+    // 检查是否已安装
+    if (await exists(nodeModulesPath)) {
+      return { success: true, duration: 0, logs: ['Dependencies already installed'] };
+    }
+
+    // 避免重复安装
+    const existingInstall = this.installQueue.get(projectPath);
+    if (existingInstall) {
+      return existingInstall;
+    }
+
+    // 执行安装
+    const installPromise = this.runInstall(projectPath);
+    this.installQueue.set(projectPath, installPromise);
+
+    try {
+      const result = await installPromise;
+      return result;
+    } finally {
+      this.installQueue.delete(projectPath);
+    }
+  }
+
+  private async runInstall(projectPath: string): Promise<InstallResult> {
+    const start = Date.now();
+    const logs: string[] = [];
+
+    return new Promise((resolve) => {
+      const process = spawn('bun', ['install'], {
+        cwd: projectPath,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      process.stdout?.on('data', (data) => {
+        logs.push(data.toString());
+      });
+
+      process.stderr?.on('data', (data) => {
+        logs.push(data.toString());
+      });
+
+      process.on('close', (code) => {
+        resolve({
+          success: code === 0,
+          duration: Date.now() - start,
+          logs,
+        });
+      });
+
+      process.on('error', (error) => {
+        logs.push(`Error: ${error.message}`);
+        resolve({
+          success: false,
+          duration: Date.now() - start,
+          logs,
+        });
+      });
+    });
+  }
+
+  async addDependency(projectPath: string, packageName: string, isDev = false): Promise<InstallResult> {
+    const start = Date.now();
+    const logs: string[] = [];
+    const args = ['add', packageName];
+    if (isDev) args.push('-D');
+
+    return new Promise((resolve) => {
+      const process = spawn('bun', args, {
+        cwd: projectPath,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      process.stdout?.on('data', (data) => logs.push(data.toString()));
+      process.stderr?.on('data', (data) => logs.push(data.toString()));
+
+      process.on('close', (code) => {
+        resolve({
+          success: code === 0,
+          duration: Date.now() - start,
+          logs,
+        });
+      });
+    });
+  }
+}
+
+export const dependencyManager = new DependencyManager();
+```
+
+### B.8 Dockerfile 配置
+
 ```dockerfile
-# 从纯静态服务 → Vite Dev Server
+# fly-server/Dockerfile
+
 FROM oven/bun:1-alpine
+
+# 安装必要工具
+RUN apk add --no-cache git
 
 WORKDIR /app
 
-# 安装 Vite 和依赖
+# 复制服务代码
 COPY package.json bun.lock* ./
-RUN bun install
+COPY src ./src
 
-# 复制项目源码
-COPY . .
+# 安装服务依赖
+RUN bun install --production
 
-# 启动 Vite Dev Server
-EXPOSE 5173
-CMD ["bun", "run", "dev", "--host", "0.0.0.0"]
+# 创建数据目录
+RUN mkdir -p /data/projects
+
+# 环境变量
+ENV NODE_ENV=production
+ENV PROJECTS_PATH=/data/projects
+ENV PORT=3000
+
+# 暴露端口
+# 3000: 主 API 服务
+# 5200-5219: Vite Dev Server 端口池
+EXPOSE 3000
+EXPOSE 5200-5219
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+
+# 启动服务
+CMD ["bun", "run", "src/index.ts"]
 ```
+
+### B.9 Fly.io 配置
+
+```toml
+# fly-server/fly.toml
+
+app = "ai-site-generator-preview"
+primary_region = "hkg"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PROJECTS_PATH = "/data/projects"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false  # 保持运行以维持 Dev Server
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "5s"
+
+# Vite Dev Server 端口代理
+[[services]]
+  internal_port = 5200
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 5200
+
+# Volume 持久化存储
+[[mounts]]
+  source = "projects_data"
+  destination = "/data/projects"
+
+[vm]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 2048
+
+# 自动扩缩容
+[[vm]]
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 2
+
+[checks]
+  [checks.health]
+    port = 3000
+    type = "http"
+    interval = "15s"
+    timeout = "5s"
+    path = "/health"
+```
+
+### B.10 资源管理与限制
+
+```typescript
+// fly-server/src/services/resource-manager.ts
+
+interface ResourceLimits {
+  maxProjects: number;
+  maxProjectSize: number;  // bytes
+  maxFilesPerProject: number;
+  devServerIdleTimeout: number;  // ms
+  buildTimeout: number;  // ms
+}
+
+const DEFAULT_LIMITS: ResourceLimits = {
+  maxProjects: 100,
+  maxProjectSize: 50 * 1024 * 1024,  // 50MB
+  maxFilesPerProject: 500,
+  devServerIdleTimeout: 30 * 60 * 1000,  // 30 minutes
+  buildTimeout: 5 * 60 * 1000,  // 5 minutes
+};
+
+class ResourceManager {
+  private limits: ResourceLimits = DEFAULT_LIMITS;
+
+  async checkProjectQuota(projectId: string): Promise<boolean> {
+    const projectCount = await this.getProjectCount();
+    return projectCount < this.limits.maxProjects;
+  }
+
+  async getProjectSize(projectPath: string): Promise<number> {
+    // 使用 du 命令获取目录大小
+    const { stdout } = await Bun.spawn(['du', '-sb', projectPath]);
+    const size = parseInt(await new Response(stdout).text(), 10);
+    return size;
+  }
+
+  async cleanupOldProjects(): Promise<string[]> {
+    // 清理超过 7 天未活跃的项目
+    const threshold = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const cleaned: string[] = [];
+
+    // 实现清理逻辑...
+
+    return cleaned;
+  }
+
+  getMemoryUsage(): { used: number; total: number; percent: number } {
+    const used = process.memoryUsage().heapUsed;
+    const total = process.memoryUsage().heapTotal;
+    return {
+      used,
+      total,
+      percent: Math.round((used / total) * 100),
+    };
+  }
+}
+
+export const resourceManager = new ResourceManager();
+```
+
+### B.11 监控与日志
+
+```typescript
+// fly-server/src/services/monitoring.ts
+
+interface Metrics {
+  activeProjects: number;
+  runningDevServers: number;
+  totalRequests: number;
+  avgResponseTime: number;
+  memoryUsage: number;
+  cpuUsage: number;
+}
+
+class MonitoringService {
+  private requestCount = 0;
+  private responseTimes: number[] = [];
+
+  recordRequest(duration: number): void {
+    this.requestCount++;
+    this.responseTimes.push(duration);
+
+    // 保持最近 1000 条记录
+    if (this.responseTimes.length > 1000) {
+      this.responseTimes.shift();
+    }
+  }
+
+  getMetrics(): Metrics {
+    const avgResponseTime = this.responseTimes.length > 0
+      ? this.responseTimes.reduce((a, b) => a + b, 0) / this.responseTimes.length
+      : 0;
+
+    return {
+      activeProjects: viteManager.getActiveCount(),
+      runningDevServers: viteManager.getRunningCount(),
+      totalRequests: this.requestCount,
+      avgResponseTime: Math.round(avgResponseTime),
+      memoryUsage: process.memoryUsage().heapUsed,
+      cpuUsage: 0,  // 需要额外实现
+    };
+  }
+
+  // 暴露 Prometheus 格式的指标
+  getPrometheusMetrics(): string {
+    const metrics = this.getMetrics();
+    return `
+# HELP fly_server_active_projects Number of active projects
+# TYPE fly_server_active_projects gauge
+fly_server_active_projects ${metrics.activeProjects}
+
+# HELP fly_server_running_dev_servers Number of running Vite dev servers
+# TYPE fly_server_running_dev_servers gauge
+fly_server_running_dev_servers ${metrics.runningDevServers}
+
+# HELP fly_server_total_requests Total number of requests
+# TYPE fly_server_total_requests counter
+fly_server_total_requests ${metrics.totalRequests}
+
+# HELP fly_server_avg_response_time_ms Average response time in milliseconds
+# TYPE fly_server_avg_response_time_ms gauge
+fly_server_avg_response_time_ms ${metrics.avgResponseTime}
+
+# HELP fly_server_memory_usage_bytes Memory usage in bytes
+# TYPE fly_server_memory_usage_bytes gauge
+fly_server_memory_usage_bytes ${metrics.memoryUsage}
+`.trim();
+  }
+}
+
+export const monitoring = new MonitoringService();
+```
+
+---
 
 ### Phase 2: AST 处理系统 (第 3-4 周)
 

@@ -3,7 +3,14 @@ import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { query, queryOne } from '../db/postgres';
 import { generateWithKimi } from '../services/kimi';
-import { updateProjectFiles, updateProjectFile, getProjectPreviewUrl } from '../services/flyio';
+import {
+  createProject as createFlyProject,
+  updateProjectFiles,
+  updateProjectFile,
+  getProjectPreviewUrl,
+  startPreview,
+  getProjectStatus as getFlyProjectStatus,
+} from '../services/flyio';
 import * as path from 'path';
 
 const router = Router();
@@ -101,11 +108,23 @@ router.post('/generate', async (req: Request, res: Response) => {
           projectId
         );
 
-        // 阶段 1: 分析需求
-        await updateProgress(projectId, 'generating', '🔍 正在分析需求...', 10);
+        // 阶段 1: 在 fly-server 上创建项目脚手架
+        await updateProgress(projectId, 'generating', '🏗️ 正在创建项目脚手架...', 10);
 
-        // 阶段 2: 调用 Kimi K2 API 生成 (带进度回调)
-        await updateProgress(projectId, 'generating', '🤖 Kimi K2 正在生成代码...', 20);
+        try {
+          const scaffoldResult = await createFlyProject({
+            projectId,
+            projectName,
+            description,
+          });
+          console.log(`[API] Scaffold created: ${scaffoldResult.files.length} files`);
+        } catch (scaffoldError) {
+          console.warn('[API] Scaffold creation failed, continuing with code generation:', scaffoldError);
+          // 脚手架创建失败不阻止代码生成
+        }
+
+        // 阶段 2: 调用 Kimi K2 API 生成 React 代码
+        await updateProgress(projectId, 'generating', '🤖 Kimi K2 正在生成 React 代码...', 20);
 
         const result = await generateWithKimi(description, projectPath, async (message, percent, todos) => {
           // 实时更新进度到数据库
@@ -116,7 +135,7 @@ router.post('/generate', async (req: Request, res: Response) => {
         });
 
         if (result.success && result.files.length > 0) {
-          // 阶段 3: 保存文件
+          // 阶段 3: 保存文件到数据库
           await updateProgress(projectId, 'generating', `📁 正在保存 ${result.files.length} 个文件...`, 60);
 
           for (const file of result.files) {
@@ -127,8 +146,8 @@ router.post('/generate', async (req: Request, res: Response) => {
             );
           }
 
-          // 阶段 4: 部署到 Fly.io
-          await updateProgress(projectId, 'deploying', '🚀 正在部署到 Fly.io...', 80);
+          // 阶段 4: 上传代码到 fly-server
+          await updateProgress(projectId, 'deploying', '🚀 正在上传代码到 Fly.io...', 75);
 
           await updateProjectFiles(projectId, {
             updates: result.files.map((f) => ({
@@ -137,7 +156,24 @@ router.post('/generate', async (req: Request, res: Response) => {
             })),
           });
 
-          // 阶段 5: 完成
+          // 阶段 5: 启动 Vite Dev Server 预览
+          await updateProgress(projectId, 'deploying', '⚡ 正在启动预览服务...', 90);
+
+          try {
+            const previewResult = await startPreview(projectId);
+            console.log(`[API] Preview started at port ${previewResult.port}`);
+
+            // 更新预览 URL
+            await query(
+              `UPDATE projects SET preview_url = $1 WHERE id = $2`,
+              [previewResult.url, projectId]
+            );
+          } catch (previewError) {
+            console.warn('[API] Preview start failed:', previewError);
+            // 预览启动失败不影响部署状态
+          }
+
+          // 阶段 6: 完成
           await updateProgress(projectId, 'deployed', '✅ 部署完成！', 100);
           console.log(`[API] Project ${projectId} deployed successfully`);
         } else {

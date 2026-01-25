@@ -12,24 +12,146 @@ interface UpdateFilesParams {
   updates: UpdateFileParams[];
 }
 
+interface ProjectConfig {
+  projectId: string;
+  projectName: string;
+  description?: string;
+}
+
+interface CreateProjectResult {
+  projectId: string;
+  files: Array<{ path: string }>;
+  previewUrl: string;
+}
+
+interface ProjectStatus {
+  exists: boolean;
+  hasNodeModules: boolean;
+  isRunning: boolean;
+  port?: number;
+  previewUrl?: string;
+}
+
+// 创建项目
+export async function createProject(
+  config: ProjectConfig
+): Promise<CreateProjectResult> {
+  const response = await fetch(`${FLY_API_URL}/projects`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(config),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to create project: ${response.statusText}`);
+  }
+
+  const result = await response.json();
+  return result.data;
+}
+
+// 获取项目状态
+export async function getProjectStatus(
+  projectId: string
+): Promise<ProjectStatus> {
+  const response = await fetch(`${FLY_API_URL}/projects/${projectId}`);
+
+  if (!response.ok) {
+    throw new Error(`Failed to get project status: ${response.statusText}`);
+  }
+
+  const result = await response.json();
+  return result.data;
+}
+
+// 启动项目预览
+export async function startPreview(
+  projectId: string
+): Promise<{ port: number; url: string }> {
+  const response = await fetch(`${FLY_API_URL}/projects/${projectId}/preview/start`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to start preview: ${response.statusText}`);
+  }
+
+  const result = await response.json();
+  return result.data;
+}
+
+// 停止项目预览
+export async function stopPreview(projectId: string): Promise<{ success: boolean }> {
+  const response = await fetch(`${FLY_API_URL}/projects/${projectId}/preview/stop`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to stop preview: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+// 添加依赖
+export async function addDependency(
+  projectId: string,
+  packageName: string,
+  isDev: boolean = false
+): Promise<{ success: boolean }> {
+  const response = await fetch(`${FLY_API_URL}/projects/${projectId}/dependencies`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ package: packageName, dev: isDev }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to add dependency: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+// 移除依赖
+export async function removeDependency(
+  projectId: string,
+  packageName: string
+): Promise<{ success: boolean }> {
+  const response = await fetch(
+    `${FLY_API_URL}/projects/${projectId}/dependencies/${encodeURIComponent(packageName)}`,
+    { method: 'DELETE' }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to remove dependency: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
 // 更新项目的单个文件
 export async function updateProjectFile(
   projectId: string,
   params: UpdateFileParams
 ): Promise<{ success: boolean; path: string }> {
-  const response = await fetch(`${FLY_API_URL}/api/projects/${projectId}/update-file`, {
-    method: 'POST',
+  const response = await fetch(`${FLY_API_URL}/projects/${projectId}/files`, {
+    method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(params),
+    body: JSON.stringify({ updates: [params] }),
   });
 
   if (!response.ok) {
     throw new Error(`Failed to update file: ${response.statusText}`);
   }
 
-  return response.json();
+  const result = await response.json();
+  return { success: result.success, path: params.path };
 }
 
 // 批量更新项目文件
@@ -37,8 +159,8 @@ export async function updateProjectFiles(
   projectId: string,
   params: UpdateFilesParams
 ): Promise<{ success: boolean; count: number }> {
-  const response = await fetch(`${FLY_API_URL}/api/projects/${projectId}/update-files`, {
-    method: 'POST',
+  const response = await fetch(`${FLY_API_URL}/projects/${projectId}/files`, {
+    method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
     },
@@ -49,7 +171,8 @@ export async function updateProjectFiles(
     throw new Error(`Failed to update files: ${response.statusText}`);
   }
 
-  return response.json();
+  const result = await response.json();
+  return { success: result.success, count: params.updates.length };
 }
 
 // 获取项目的文件内容
@@ -58,7 +181,7 @@ export async function getProjectFile(
   filePath: string
 ): Promise<{ content: string; path: string } | null> {
   const response = await fetch(
-    `${FLY_API_URL}/api/projects/${projectId}/file/${encodeURIComponent(filePath)}`
+    `${FLY_API_URL}/projects/${projectId}/files/${encodeURIComponent(filePath)}`
   );
 
   if (response.status === 404) {
@@ -69,25 +192,27 @@ export async function getProjectFile(
     throw new Error(`Failed to get file: ${response.statusText}`);
   }
 
-  return response.json();
+  const result = await response.json();
+  return result.data || null;
 }
 
 // 获取项目的所有文件列表
 export async function listProjectFiles(
   projectId: string
 ): Promise<{ files: Array<{ path: string; size: number }> }> {
-  const response = await fetch(`${FLY_API_URL}/api/projects/${projectId}/files`);
+  const response = await fetch(`${FLY_API_URL}/projects/${projectId}/files`);
 
   if (!response.ok) {
     throw new Error(`Failed to list files: ${response.statusText}`);
   }
 
-  return response.json();
+  const result = await response.json();
+  return result.data || { files: [] };
 }
 
 // 删除项目
 export async function deleteProject(projectId: string): Promise<{ success: boolean }> {
-  const response = await fetch(`${FLY_API_URL}/api/projects/${projectId}`, {
+  const response = await fetch(`${FLY_API_URL}/projects/${projectId}`, {
     method: 'DELETE',
   });
 
@@ -100,7 +225,7 @@ export async function deleteProject(projectId: string): Promise<{ success: boole
 
 // 健康检查
 export async function healthCheck(): Promise<{ status: string; timestamp: string; projectCount?: number }> {
-  const response = await fetch(`${FLY_API_URL}/api/health`);
+  const response = await fetch(`${FLY_API_URL}/health`);
 
   if (!response.ok) {
     throw new Error(`Fly.io server health check failed: ${response.statusText}`);

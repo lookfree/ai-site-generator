@@ -46,41 +46,75 @@ const KIMI_API_KEY = process.env.KIMI_API_KEY || '';
 const KIMI_API_BASE_URL = process.env.KIMI_API_BASE_URL || 'https://api.moonshot.cn/v1';
 const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2-turbo-preview';
 
-// 系统提示词 - 指导 Kimi 生成前端代码
-const SYSTEM_PROMPT = `你是一个专业的前端开发工程师，专门生成高质量的静态网页代码。
+// 系统提示词 - 指导 Kimi 生成 React + Tailwind 代码
+const SYSTEM_PROMPT = `你是一个专业的前端开发工程师，专门生成高质量的 React + TypeScript + Tailwind CSS 应用。
 
-你的任务是根据用户的描述生成一个完整的静态网站，包含以下三个文件：
-1. index.html - HTML 结构文件
-2. style.css - CSS 样式文件
-3. script.js - JavaScript 交互文件
+你的任务是根据用户的描述生成一个 React 组件，输出为 src/App.tsx 文件。
+
+技术栈要求：
+- React 18 + TypeScript
+- Tailwind CSS（直接在 className 中使用 Tailwind 类名）
+- 函数式组件 + Hooks
 
 严格遵循以下规则：
 1. 只输出代码，不要解释
-2. 使用 markdown 代码块格式，明确标注文件名和语言
-3. HTML 文件中使用相对路径引用 CSS 和 JS 文件
-4. 使用现代 CSS (Flexbox, Grid, CSS Variables)
-5. 响应式设计，适配移动端
-6. 代码简洁、语义化、可维护
-7. 添加适当的动画效果和交互
+2. 使用 markdown 代码块格式，标注文件路径
+3. 使用 Tailwind CSS 类名进行样式设计，不要写单独的 CSS 文件
+4. 使用 TypeScript，为 props 和 state 添加类型定义
+5. 响应式设计：使用 Tailwind 的响应式前缀（sm:, md:, lg:, xl:）
+6. 代码简洁、可维护，使用语义化的 HTML 元素
+7. 使用 React Hooks（useState, useEffect 等）处理状态和副作用
+8. 添加适当的动画效果（使用 Tailwind 的 transition, animate 类）
+
+常用 Tailwind 类：
+- 布局：flex, grid, items-center, justify-between, gap-4, container, mx-auto
+- 间距：p-4, px-6, py-2, m-2, mt-4, space-y-4
+- 颜色：bg-blue-500, text-white, text-gray-700, border-gray-200
+- 尺寸：w-full, h-screen, max-w-md, min-h-screen
+- 圆角：rounded, rounded-lg, rounded-full
+- 阴影：shadow, shadow-lg, shadow-xl
+- 动画：transition, duration-300, hover:scale-105, animate-pulse
 
 输出格式示例：
 
-\`\`\`html
-<!-- index.html -->
-<!DOCTYPE html>
-<html lang="zh-CN">
-...
-</html>
+\`\`\`tsx
+// src/App.tsx
+import { useState } from 'react';
+
+export default function App() {
+  const [count, setCount] = useState(0);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
+        <h1 className="text-3xl font-bold text-gray-800 mb-4">Hello World</h1>
+        <p className="text-gray-600 mb-6">欢迎使用 React + Tailwind</p>
+        <button
+          onClick={() => setCount(c => c + 1)}
+          className="w-full py-3 px-6 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg transition duration-200"
+        >
+          点击次数: {count}
+        </button>
+      </div>
+    </div>
+  );
+}
 \`\`\`
 
-\`\`\`css
-/* style.css */
-...
+如果需要多个组件，可以在同一文件中定义，或者生成多个文件：
+
+\`\`\`tsx
+// src/components/Header.tsx
+export function Header() {
+  return <header>...</header>;
+}
 \`\`\`
 
-\`\`\`javascript
-// script.js
-...
+\`\`\`tsx
+// src/components/Footer.tsx
+export function Footer() {
+  return <footer>...</footer>;
+}
 \`\`\``;
 
 // 从 Kimi 响应中解析代码块
@@ -93,24 +127,65 @@ function parseCodeBlocks(content: string): Array<{ path: string; content: string
 
   while ((match = codeBlockRegex.exec(content)) !== null) {
     const language = match[1]?.toLowerCase() || '';
-    const code = match[2].trim();
+    let code = match[2].trim();
 
-    // 根据语言类型确定文件名
+    // 检查代码中是否有文件路径注释（如 // src/App.tsx）
     let filename = '';
-    if (language === 'html' || code.includes('<!DOCTYPE') || code.includes('<html')) {
-      filename = 'index.html';
-    } else if (language === 'css' || code.includes('{') && code.includes(':') && !code.includes('function')) {
-      filename = 'style.css';
-    } else if (language === 'javascript' || language === 'js') {
-      filename = 'script.js';
+    const pathCommentMatch = code.match(/^\/\/\s*(src\/[\w\/\.-]+\.tsx?)\s*\n/);
+    if (pathCommentMatch) {
+      filename = pathCommentMatch[1];
+      // 移除路径注释行
+      code = code.replace(pathCommentMatch[0], '').trim();
+    }
+
+    // 如果没有从注释中获取路径，根据语言类型和内容判断
+    if (!filename) {
+      if (language === 'tsx' || language === 'typescript' || language === 'ts') {
+        // React 组件检测
+        if (code.includes('export default function App') || code.includes('function App()')) {
+          filename = 'src/App.tsx';
+        } else if (code.includes('export function') || code.includes('export default function')) {
+          // 尝试从 export 语句提取组件名
+          const exportMatch = code.match(/export (?:default )?function (\w+)/);
+          if (exportMatch) {
+            filename = `src/components/${exportMatch[1]}.tsx`;
+          }
+        }
+      } else if (language === 'jsx' || language === 'javascript' || language === 'js') {
+        if (code.includes('export default function App') || code.includes('function App()')) {
+          filename = 'src/App.tsx';
+        }
+      } else if (language === 'css') {
+        filename = 'src/styles/custom.css';
+      } else if (language === 'html') {
+        // 保留对旧格式的兼容
+        filename = 'index.html';
+      }
+    }
+
+    // 默认为 App.tsx 如果是 React 组件但没有匹配到具体文件
+    if (!filename && (language === 'tsx' || language === 'jsx') && code.includes('return')) {
+      filename = 'src/App.tsx';
     }
 
     if (filename && code) {
-      // 检查是否已存在该文件，避免重复
-      const existing = files.find(f => f.path === filename);
-      if (!existing) {
+      // 检查是否已存在该文件
+      const existingIndex = files.findIndex(f => f.path === filename);
+      if (existingIndex === -1) {
         files.push({ path: filename, content: code });
+      } else {
+        // 如果文件已存在，用新内容替换（后面的代码块优先）
+        files[existingIndex].content = code;
       }
+    }
+  }
+
+  // 确保至少有一个 App.tsx
+  if (files.length > 0 && !files.some(f => f.path === 'src/App.tsx')) {
+    // 找到第一个 TSX/JSX 文件，将其重命名为 App.tsx
+    const firstComponent = files.find(f => f.path.endsWith('.tsx') || f.path.endsWith('.jsx'));
+    if (firstComponent) {
+      firstComponent.path = 'src/App.tsx';
     }
   }
 
