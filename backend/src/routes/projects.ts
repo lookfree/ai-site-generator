@@ -164,11 +164,13 @@ router.post('/generate', async (req: Request, res: Response) => {
             const previewResult = await startPreview(projectId);
             console.log(`[API] Preview started at port ${previewResult.port}`);
 
-            // 更新预览 URL
+            // 更新预览 URL - 使用外部可访问的代理 URL
+            const externalPreviewUrl = getProjectPreviewUrl(projectId);
             await query(
               `UPDATE projects SET preview_url = $1 WHERE id = $2`,
-              [previewResult.url, projectId]
+              [externalPreviewUrl, projectId]
             );
+            console.log(`[API] Preview URL set to: ${externalPreviewUrl}`);
           } catch (previewError) {
             console.warn('[API] Preview start failed:', previewError);
             // 预览启动失败不影响部署状态

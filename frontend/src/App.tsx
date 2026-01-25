@@ -167,7 +167,7 @@ function App() {
             {currentProject ? (
               <PreviewFrame
                 projectId={currentProject.id}
-                previewUrl={currentProject.preview_url || getDirectPreviewUrl(currentProject.id)}
+                previewUrl={getDirectPreviewUrl(currentProject.id)}
                 editModeEnabled={viewMode === 'design'}
               />
             ) : !isGenerating ? (
@@ -219,7 +219,7 @@ function App() {
           {currentProject && (
             <>
               <span className="text-sm text-gray-400">
-                预览: {currentProject.preview_url}
+                预览: {getDirectPreviewUrl(currentProject.id)}
               </span>
               <button
                 onClick={handleSyncToFly}
