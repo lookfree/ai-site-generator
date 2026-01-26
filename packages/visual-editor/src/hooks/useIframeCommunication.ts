@@ -68,9 +68,10 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
   const updateElement = useCallback((
     jsxId: string,
     type: 'text' | 'className' | 'style' | 'attribute',
-    value: unknown
+    value: unknown,
+    elementIndex?: number
   ) => {
-    postMessage('UPDATE_ELEMENT', { jsxId, type, value });
+    postMessage('UPDATE_ELEMENT', { jsxId, type, value, elementIndex });
   }, [postMessage]);
 
   /**
@@ -108,6 +109,22 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
         case 'ELEMENT_DESELECTED':
           setSelectedElement(null);
           break;
+
+        case 'ELEMENT_UPDATED': {
+          // 元素属性更新后，只更新 computedStyles（需要从 iframe 获取）
+          // className 由本地乐观更新处理，不需要从 iframe 同步
+          const currentElement = useEditorStore.getState().selectedElement;
+          const updatedInfo = payload as SelectedElementInfo;
+          if (currentElement && currentElement.jsxId === updatedInfo.jsxId) {
+            setSelectedElement({
+              ...currentElement,
+              // 更新计算样式（这些只能从 iframe 获取）
+              computedStyles: updatedInfo.computedStyles,
+              boundingRect: updatedInfo.boundingRect,
+            });
+          }
+          break;
+        }
       }
 
       // 调用自定义处理器

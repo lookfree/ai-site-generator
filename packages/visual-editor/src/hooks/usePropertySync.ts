@@ -13,6 +13,7 @@ import type { StyleUpdatePayload, EditAction } from '../types';
  */
 export function usePropertySync(jsxId: string) {
   const selectedElement = useEditorStore(state => state.selectedElement);
+  const setSelectedElement = useEditorStore(state => state.setSelectedElement);
   const addAction = useEditorStore(state => state.addAction);
   const { updateElement } = useIframeCommunication();
 
@@ -69,17 +70,24 @@ export function usePropertySync(jsxId: string) {
       type: 'className',
       oldValue: selectedElement.className,
       newValue: newClassName,
+      filePath: selectedElement.jsxFile,
     };
     addAction(action);
 
+    // 乐观更新: 立即更新本地状态以获得即时 UI 反馈
+    setSelectedElement({
+      ...selectedElement,
+      className: newClassName,
+    });
+
     // 更新 iframe 中的元素
-    updateElement(jsxId, 'className', newClassName);
+    updateElement(jsxId, 'className', newClassName, selectedElement.elementIndex);
 
     // 处理行内样式
     if (payload.style) {
-      updateElement(jsxId, 'style', payload.style);
+      updateElement(jsxId, 'style', payload.style, selectedElement.elementIndex);
     }
-  }, [selectedElement, jsxId, getCurrentClasses, addAction, updateElement]);
+  }, [selectedElement, jsxId, getCurrentClasses, addAction, updateElement, setSelectedElement]);
 
   /**
    * 更新文本内容
@@ -97,11 +105,12 @@ export function usePropertySync(jsxId: string) {
       type: 'text',
       oldValue: selectedElement.textContent,
       newValue: text,
+      filePath: selectedElement.jsxFile,
     };
     addAction(action);
 
     // 更新 iframe 中的元素
-    updateElement(jsxId, 'text', text);
+    updateElement(jsxId, 'text', text, selectedElement.elementIndex);
   }, [selectedElement, jsxId, addAction, updateElement]);
 
   /**
@@ -120,11 +129,12 @@ export function usePropertySync(jsxId: string) {
       type: 'attribute',
       oldValue: { name, value: selectedElement.attributes[name] ?? null },
       newValue: { name, value },
+      filePath: selectedElement.jsxFile,
     };
     addAction(action);
 
     // 更新 iframe 中的元素
-    updateElement(jsxId, 'attribute', { name, value });
+    updateElement(jsxId, 'attribute', { name, value }, selectedElement.elementIndex);
   }, [selectedElement, jsxId, addAction, updateElement]);
 
   return {
