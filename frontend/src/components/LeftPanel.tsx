@@ -5,6 +5,10 @@ import ThemePanel from './ThemePanel';
 
 interface SelectedElementInfo {
   jsxId: string;
+  // Source code location info (for AST matching)
+  jsxFile?: string;
+  jsxLine?: number;
+  jsxCol?: number;
   tagName: string;
   className: string;
   textContent: string;
@@ -12,6 +16,41 @@ interface SelectedElementInfo {
   boundingRect: DOMRect;
   attributes: Record<string, string>;
   path: string[];
+}
+
+interface SavedChanges {
+  textContent?: string;
+  originalTextContent?: string;
+  tagName?: string;
+  className?: string;
+  // Position info for precise AST matching
+  jsxFile?: string;
+  jsxLine?: number;
+  jsxCol?: number;
+  styles?: Record<string, string>;
+}
+
+interface Theme {
+  id: string;
+  name: string;
+  colors: {
+    primary: string;
+    primaryText: string;
+    secondary: string;
+    secondaryText: string;
+    accent: string;
+    accentText: string;
+  };
+  typography: {
+    sansSerif: string;
+    serif: string;
+    mono: string;
+  };
+  effects: {
+    borderRadius: string;
+    shadowColor: string;
+    shadowOpacity: number;
+  };
 }
 
 interface LeftPanelProps {
@@ -24,6 +63,9 @@ interface LeftPanelProps {
   onSelectComponent?: (component: ComponentNode) => void;
   selectedElementFromIframe?: SelectedElementInfo | null;
   onUpdateElement?: (jsxId: string, updates: { type: string; value: unknown }) => void;
+  onSaveElement?: (jsxId: string, changes: SavedChanges) => void;
+  isSaving?: boolean;
+  onApplyTheme?: (theme: Theme) => void;
 }
 
 type DesignSection = 'menu' | 'themes' | 'visual-edits';
@@ -37,6 +79,9 @@ function LeftPanel({
   projectId,
   selectedElementFromIframe,
   onUpdateElement,
+  onSaveElement,
+  isSaving,
+  onApplyTheme,
 }: LeftPanelProps) {
   const [description, setDescription] = useState('');
   const [designSection, setDesignSection] = useState<DesignSection>('menu');
@@ -249,12 +294,14 @@ function LeftPanel({
               </div>
             ) : designSection === 'themes' ? (
               /* Themes Panel */
-              <ThemePanel projectId={projectId} />
+              <ThemePanel projectId={projectId} onApplyTheme={onApplyTheme} />
             ) : (
               /* Visual Edits Panel */
               <VisualEditPanel
-                selectedElement={selectedElementFromIframe}
+                selectedElement={selectedElementFromIframe ?? null}
                 onUpdateElement={onUpdateElement}
+                onSave={onSaveElement}
+                isSaving={isSaving}
               />
             )}
           </div>

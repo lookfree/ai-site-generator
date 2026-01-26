@@ -177,6 +177,8 @@ export interface EditResult {
     newValue?: unknown;
   }>;
   error?: string;
+  /** Warning message when operation succeeded but with issues (e.g., Fly.io sync failed) */
+  warning?: string;
 }
 
 // 获取组件树
@@ -222,17 +224,39 @@ export async function updateComponentClass(
   return response.json();
 }
 
+// 位置信息 (用于精确的 AST 定位)
+export interface PositionInfo {
+  jsxFile?: string;   // Source file path from data-jsx-file
+  jsxLine?: number;   // Source line from data-jsx-line
+  jsxCol?: number;    // Source column from data-jsx-col
+}
+
 // 更新组件文本内容
 export async function updateComponentText(
   projectId: string,
   componentId: string,
   text: string,
-  filePath = 'src/App.tsx'
+  filePath = 'src/App.tsx',
+  originalText?: string,
+  tagName?: string,
+  className?: string,
+  position?: PositionInfo
 ): Promise<EditResult> {
   const response = await fetch(`${API_BASE}/code-editor/${projectId}/update-text`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ componentId, text, file: filePath }),
+    body: JSON.stringify({
+      componentId,
+      text,
+      file: filePath,
+      originalText,  // Used for text-based matching in source code
+      tagName,       // Additional context for matching
+      className,     // Additional context for matching
+      // Position-based matching (highest priority)
+      jsxFile: position?.jsxFile,
+      jsxLine: position?.jsxLine,
+      jsxCol: position?.jsxCol,
+    }),
   });
   if (!response.ok) throw new Error('Failed to update text');
   return response.json();

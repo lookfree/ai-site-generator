@@ -3,12 +3,19 @@ import Header from './components/Header';
 import LeftPanel from './components/LeftPanel';
 import PreviewFrame from './components/PreviewFrame';
 import ProjectList from './components/ProjectList';
-import { generateProject, getProjectStatus, getDirectPreviewUrl, getProjects, syncToFly, type Project, type ComponentNode } from './services/api';
+import { generateProject, getProjectStatus, getProxyPreviewUrl, getProjects, syncToFly, updateComponentText, updateComponentStyle, type Project, type ComponentNode, type EditResult } from './services/api';
+
+// Use proxy URL for same-origin iframe communication
+const getPreviewUrl = getProxyPreviewUrl;
 
 type ViewMode = 'chat' | 'design';
 
 interface SelectedElementInfo {
   jsxId: string;
+  // Source code location info (for AST matching)
+  jsxFile?: string;
+  jsxLine?: number;
+  jsxCol?: number;
   tagName: string;
   className: string;
   textContent: string;
@@ -23,6 +30,41 @@ interface ElementUpdate {
   value: string | Record<string, string>;
 }
 
+interface SavedChanges {
+  textContent?: string;
+  originalTextContent?: string;
+  tagName?: string;
+  className?: string;
+  // Position info for precise AST matching
+  jsxFile?: string;
+  jsxLine?: number;
+  jsxCol?: number;
+  styles?: Record<string, string>;
+}
+
+interface Theme {
+  id: string;
+  name: string;
+  colors: {
+    primary: string;
+    primaryText: string;
+    secondary: string;
+    secondaryText: string;
+    accent: string;
+    accentText: string;
+  };
+  typography: {
+    sansSerif: string;
+    serif: string;
+    mono: string;
+  };
+  effects: {
+    borderRadius: string;
+    shadowColor: string;
+    shadowOpacity: number;
+  };
+}
+
 function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('chat');
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
@@ -33,6 +75,7 @@ function App() {
   const [showProjectList, setShowProjectList] = useState(false);
   const [selectedElement, setSelectedElement] = useState<SelectedElementInfo | null>(null);
   const [elementUpdate, setElementUpdate] = useState<{ jsxId: string; updates: ElementUpdate } | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   // 加载最近的已部署项目（如果有）
   useEffect(() => {
@@ -165,6 +208,89 @@ function App() {
     setElementUpdate({ jsxId, updates: updates as ElementUpdate });
   }, []);
 
+  // 处理保存元素更改
+  const handleSaveElement = useCallback(async (jsxId: string, changes: SavedChanges) => {
+    if (!currentProject?.id) {
+      console.error('No project selected');
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      // 调用后端 API 保存更改到 fly-server (触发 HMR)
+      const promises: Promise<unknown>[] = [];
+
+      // 更新文本内容 - pass original text and position info for source code matching
+      if (changes.textContent !== undefined && changes.originalTextContent !== undefined) {
+        // Use jsxFile from changes if available, otherwise default to src/App.tsx
+        const filePath = changes.jsxFile || 'src/App.tsx';
+        promises.push(
+          updateComponentText(
+            currentProject.id,
+            jsxId,
+            changes.textContent,
+            filePath,
+            changes.originalTextContent,
+            changes.tagName,
+            changes.className,
+            // Position info for precise AST matching (highest priority)
+            {
+              jsxFile: changes.jsxFile,
+              jsxLine: changes.jsxLine,
+              jsxCol: changes.jsxCol,
+            }
+          )
+        );
+      }
+
+      // 更新样式
+      if (changes.styles && Object.keys(changes.styles).length > 0) {
+        promises.push(
+          updateComponentStyle(currentProject.id, jsxId, changes.styles)
+        );
+      }
+
+      // 等待所有更新完成
+      const results = await Promise.all(promises) as EditResult[];
+      console.log('Element saved to fly-server:', results);
+
+      // Check for warnings in results
+      const warnings = results.filter(r => r.warning).map(r => r.warning);
+      if (warnings.length > 0) {
+        console.warn('Save completed with warnings:', warnings);
+        // Show warning to user - in production, use a toast notification
+        alert(warnings.join('\n'));
+      }
+
+      // HMR 会自动刷新预览，无需手动刷新 iframe
+    } catch (error) {
+      console.error('Save failed:', error);
+      // Show error to user
+      alert('Save failed. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [currentProject?.id]);
+
+  // 处理应用主题
+  const handleApplyTheme = useCallback((theme: Theme) => {
+    console.log('Apply theme:', theme);
+
+    // 发送主题到 iframe
+    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+    if (iframe?.contentWindow) {
+      iframe.contentWindow.postMessage({
+        type: 'APPLY_THEME',
+        theme: {
+          colors: theme.colors,
+          typography: theme.typography,
+          effects: theme.effects
+        }
+      }, '*');
+    }
+  }, []);
+
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -190,6 +316,9 @@ function App() {
           onSelectComponent={handleSelectComponent}
           selectedElementFromIframe={selectedElement}
           onUpdateElement={handleUpdateElement}
+          onSaveElement={handleSaveElement}
+          isSaving={isSaving}
+          onApplyTheme={handleApplyTheme}
         />
 
         {/* 右侧预览区 */}
@@ -199,7 +328,7 @@ function App() {
             {currentProject ? (
               <PreviewFrame
                 projectId={currentProject.id}
-                previewUrl={getDirectPreviewUrl(currentProject.id)}
+                previewUrl={getPreviewUrl(currentProject.id)}
                 editModeEnabled={viewMode === 'design'}
                 onElementSelected={handleElementSelected}
                 elementUpdate={elementUpdate}
@@ -253,7 +382,7 @@ function App() {
           {currentProject && (
             <>
               <span className="text-sm text-gray-400">
-                预览: {getDirectPreviewUrl(currentProject.id)}
+                预览: {getPreviewUrl(currentProject.id)}
               </span>
               <button
                 onClick={handleSyncToFly}

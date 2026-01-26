@@ -393,18 +393,49 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
 function generateJsxIdPlugin(): string {
   return `/**
- * Babel 插件：为 JSX 元素注入 data-jsx-id 属性
- * 用于 Visual Editor 的元素定位
+ * Babel 插件：为 JSX 元素注入 data-jsx-* 属性
+ * 用于 Visual Editor 的元素定位和源代码映射
+ *
+ * 注入属性:
+ * - data-jsx-id: 稳定的唯一标识 (MD5 hash)
+ * - data-jsx-file: 源文件路径 (相对路径)
+ * - data-jsx-line: 源代码行号
+ * - data-jsx-col: 源代码列号
  */
 
-let fileCounter = 0;
-const fileMap = new Map();
+import { createHash } from 'crypto';
 
-function getFileId(filename) {
-  if (!fileMap.has(filename)) {
-    fileMap.set(filename, ++fileCounter);
+/**
+ * 生成稳定的 JSX ID (基于文件路径+行号+列号的 MD5 哈希)
+ */
+function generateStableId(filePath, line, column) {
+  const input = filePath + ':' + line + ':' + column;
+  return createHash('md5').update(input).digest('hex').slice(0, 8);
+}
+
+/**
+ * 将文件路径转换为相对路径 (去除项目根目录前缀)
+ */
+function normalizeFilePath(filename) {
+  // 提取 src/ 开头的相对路径
+  const srcIndex = filename.indexOf('src/');
+  if (srcIndex !== -1) {
+    return filename.slice(srcIndex);
   }
-  return fileMap.get(filename);
+  // 如果没有 src/，返回文件名
+  const lastSlash = filename.lastIndexOf('/');
+  return lastSlash !== -1 ? filename.slice(lastSlash + 1) : filename;
+}
+
+/**
+ * 创建 JSX 属性节点
+ */
+function createJsxAttr(name, value) {
+  return {
+    type: 'JSXAttribute',
+    name: { type: 'JSXIdentifier', name },
+    value: { type: 'StringLiteral', value },
+  };
 }
 
 export default function jsxIdPlugin() {
@@ -431,27 +462,21 @@ export default function jsxIdPlugin() {
         );
         if (hasJsxId) return;
 
-        // 生成唯一 ID: 文件ID-行号-列号
-        const fileId = getFileId(filename);
+        // 获取位置信息
         const line = node.loc?.start?.line || 0;
         const col = node.loc?.start?.column || 0;
-        const jsxId = \`\${fileId}-\${line}-\${col}\`;
+        const filePath = normalizeFilePath(filename);
 
-        // 创建 data-jsx-id 属性
-        const jsxIdAttr = {
-          type: 'JSXAttribute',
-          name: {
-            type: 'JSXIdentifier',
-            name: 'data-jsx-id',
-          },
-          value: {
-            type: 'StringLiteral',
-            value: jsxId,
-          },
-        };
+        // 生成稳定的唯一 ID
+        const jsxId = generateStableId(filePath, line, col);
 
-        // 添加属性到元素
-        node.attributes.push(jsxIdAttr);
+        // 注入 data-jsx-* 属性
+        node.attributes.push(
+          createJsxAttr('data-jsx-id', jsxId),
+          createJsxAttr('data-jsx-file', filePath),
+          createJsxAttr('data-jsx-line', String(line)),
+          createJsxAttr('data-jsx-col', String(col))
+        );
       },
     },
   };

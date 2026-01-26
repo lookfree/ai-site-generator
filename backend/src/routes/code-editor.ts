@@ -13,7 +13,7 @@
 
 import { Router, Request, Response } from 'express';
 import { query, queryOne } from '../db/postgres';
-import { astEditor, editCode, findNodes, findNodeById } from '../services/ast';
+import { editCode, editCodeByText, editCodeByPosition, findNodes, findNodeById } from '../services/ast';
 import { updateProjectFile } from '../services/flyio';
 
 const router = Router();
@@ -183,17 +183,20 @@ router.post('/:projectId/update-class', async (req: Request, res: Response) => {
     );
 
     // 同步到 Fly.io (触发 HMR)
+    let syncWarning: string | undefined;
     try {
       await updateProjectFile(projectId, { path: filePath, content: result.code! });
       console.log(`[CodeEditor] Class updated and synced: ${projectId}/${componentId}`);
     } catch (flyError) {
       console.warn('[CodeEditor] Fly.io sync failed:', flyError);
+      syncWarning = 'Changes saved to database but live preview sync failed. Try refreshing.';
     }
 
     res.json({
       success: true,
       componentId,
       changes: result.changes,
+      warning: syncWarning,
     });
   } catch (error) {
     console.error('[API] Error updating class:', error);
@@ -204,16 +207,30 @@ router.post('/:projectId/update-class', async (req: Request, res: Response) => {
 /**
  * POST /api/code-editor/:projectId/update-text
  * 更新组件的文本内容
- * Body: { componentId: string, text: string }
+ * Body: {
+ *   componentId: string,
+ *   text: string,
+ *   originalText?: string,   // For text-based matching
+ *   tagName?: string,
+ *   jsxFile?: string,        // Source file path from data-jsx-file
+ *   jsxLine?: number,        // Source line from data-jsx-line
+ *   jsxCol?: number,         // Source column from data-jsx-col
+ * }
+ *
+ * Matching priority:
+ * 1. Position-based (jsxLine + jsxCol) - Most accurate
+ * 2. Text-based (originalText) - Fallback when position unavailable
+ * 3. ID-based (componentId) - Legacy support
  */
 router.post('/:projectId/update-text', async (req: Request, res: Response) => {
   try {
     const projectId = req.params.projectId;
-    const { componentId, text } = req.body;
-    const filePath = req.body.file || DEFAULT_FILE;
+    const { componentId, text, originalText, tagName, jsxFile, jsxLine, jsxCol } = req.body;
+    // Use jsxFile if provided, otherwise use request file or default
+    const filePath = jsxFile || req.body.file || DEFAULT_FILE;
 
-    if (!componentId || text === undefined) {
-      return res.status(400).json({ error: 'componentId and text are required' });
+    if (text === undefined) {
+      return res.status(400).json({ error: 'text is required' });
     }
 
     const file = await queryOne(
@@ -225,12 +242,33 @@ router.post('/:projectId/update-text', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'File not found' });
     }
 
-    const result = await editCode(file.content, filePath, {
-      jsxId: componentId,
-      operation: { type: 'text', payload: { text } },
-    });
+    let result;
+
+    // Priority 1: Position-based matching (most accurate)
+    // Use typeof checks because column 0 is valid but falsy
+    if (typeof jsxLine === 'number' && typeof jsxCol === 'number') {
+      console.log(`[CodeEditor] Using position-based matching: ${filePath}:${jsxLine}:${jsxCol}`);
+      result = await editCodeByPosition(file.content, filePath, jsxLine, jsxCol, {
+        type: 'text',
+        payload: { text },
+      });
+    }
+    // Priority 2: Text-based matching
+    else if (originalText) {
+      console.log(`[CodeEditor] Using text-based matching: "${originalText.slice(0, 30)}..." -> "${text.slice(0, 30)}..."`);
+      result = await editCodeByText(file.content, filePath, originalText, text, tagName);
+    }
+    // Priority 3: ID-based matching (legacy)
+    else {
+      console.log(`[CodeEditor] Using ID-based matching: ${componentId}`);
+      result = await editCode(file.content, filePath, {
+        jsxId: componentId,
+        operation: { type: 'text', payload: { text } },
+      });
+    }
 
     if (!result.success) {
+      console.error(`[CodeEditor] Update failed: ${result.error}`);
       return res.status(400).json({ error: result.error || 'Update failed' });
     }
 
@@ -241,17 +279,20 @@ router.post('/:projectId/update-text', async (req: Request, res: Response) => {
     );
 
     // 同步到 Fly.io (触发 HMR)
+    let syncWarning: string | undefined;
     try {
       await updateProjectFile(projectId, { path: filePath, content: result.code! });
       console.log(`[CodeEditor] Text updated and synced: ${projectId}/${componentId}`);
     } catch (flyError) {
       console.warn('[CodeEditor] Fly.io sync failed:', flyError);
+      syncWarning = 'Changes saved to database but live preview sync failed. Try refreshing.';
     }
 
     res.json({
       success: true,
       componentId,
       changes: result.changes,
+      warning: syncWarning,
     });
   } catch (error) {
     console.error('[API] Error updating text:', error);
@@ -315,11 +356,13 @@ router.post('/:projectId/update-props', async (req: Request, res: Response) => {
     );
 
     // 同步到 Fly.io
+    let syncWarning: string | undefined;
     try {
       await updateProjectFile(projectId, { path: filePath, content: currentCode });
       console.log(`[CodeEditor] Props updated and synced: ${projectId}/${componentId}`);
     } catch (flyError) {
       console.warn('[CodeEditor] Fly.io sync failed:', flyError);
+      syncWarning = 'Changes saved to database but live preview sync failed. Try refreshing.';
     }
 
     res.json({
@@ -327,6 +370,7 @@ router.post('/:projectId/update-props', async (req: Request, res: Response) => {
       componentId,
       updatedProps: Object.keys(props),
       changes: allChanges,
+      warning: syncWarning,
     });
   } catch (error) {
     console.error('[API] Error updating props:', error);
@@ -374,17 +418,20 @@ router.post('/:projectId/update-style', async (req: Request, res: Response) => {
     );
 
     // 同步到 Fly.io
+    let syncWarning: string | undefined;
     try {
       await updateProjectFile(projectId, { path: filePath, content: result.code! });
       console.log(`[CodeEditor] Style updated and synced: ${projectId}/${componentId}`);
     } catch (flyError) {
       console.warn('[CodeEditor] Fly.io sync failed:', flyError);
+      syncWarning = 'Changes saved to database but live preview sync failed. Try refreshing.';
     }
 
     res.json({
       success: true,
       componentId,
       changes: result.changes,
+      warning: syncWarning,
     });
   } catch (error) {
     console.error('[API] Error updating style:', error);
@@ -459,11 +506,13 @@ router.post('/:projectId/batch', async (req: Request, res: Response) => {
     );
 
     // 同步到 Fly.io
+    let syncWarning: string | undefined;
     try {
       await updateProjectFile(projectId, { path: filePath, content: currentCode });
       console.log(`[CodeEditor] Batch update synced: ${projectId}`);
     } catch (flyError) {
       console.warn('[CodeEditor] Fly.io sync failed:', flyError);
+      syncWarning = 'Changes saved to database but live preview sync failed. Try refreshing.';
     }
 
     const successCount = results.filter(r => r.success).length;
@@ -474,6 +523,7 @@ router.post('/:projectId/batch', async (req: Request, res: Response) => {
       succeeded: successCount,
       failed: operations.length - successCount,
       results,
+      warning: syncWarning,
     });
   } catch (error) {
     console.error('[API] Error in batch update:', error);

@@ -153,6 +153,48 @@ export class AstEditorService {
   }
 
   /**
+   * 根据文本内容查找节点
+   * Used for text-based matching when data-jsx-id is not available
+   */
+  findNodeByText(code: string, filePath: string, textContent: string, tagName?: string): JSXNodeInfo | null {
+    const ast = this.parse(code, filePath);
+    let foundNode: JSXNodeInfo | null = null;
+    const normalizedText = textContent.trim();
+
+    this.traverseAST(ast, (node: unknown, parent: unknown) => {
+      if (foundNode) return; // Already found
+
+      const nodeObj = node as Record<string, unknown>;
+      if (nodeObj.type === 'JSXOpeningElement') {
+        const parentObj = parent as Record<string, unknown>;
+        if (parentObj?.type !== 'JSXElement') return;
+
+        // Check if element name matches (if provided)
+        const elementName = this.getElementName(nodeObj.name);
+        if (tagName && elementName.toLowerCase() !== tagName.toLowerCase()) return;
+
+        // Extract text content from children
+        const children = parentObj.children as unknown[];
+        const nodeText = this.extractTextContent(children);
+
+        if (nodeText && nodeText.trim() === normalizedText) {
+          foundNode = {
+            type: 'JSXElement',
+            jsxId: `text-match-${normalizedText.slice(0, 20)}`,
+            element: elementName,
+            attributes: this.extractAttributes(nodeObj.attributes as unknown[]),
+            textContent: nodeText,
+            childCount: children?.length || 0,
+            location: this.extractLocation(nodeObj.span),
+          };
+        }
+      }
+    });
+
+    return foundNode;
+  }
+
+  /**
    * 执行单个编辑操作
    */
   async edit(code: string, filePath: string, request: AstEditRequest): Promise<AstEditResult> {
@@ -183,6 +225,144 @@ export class AstEditorService {
       const newCode = this.generate(newAst);
 
       // 更新缓存
+      this.cache.set(filePath, { code: newCode, ast: newAst });
+
+      return {
+        success: true,
+        code: newCode,
+        changes,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * 根据文本内容执行编辑操作
+   * This is used when data-jsx-id is not available in source code
+   */
+  async editByText(
+    code: string,
+    filePath: string,
+    originalText: string,
+    newText: string,
+    tagName?: string
+  ): Promise<AstEditResult> {
+    try {
+      const ast = this.parse(code, filePath);
+      const changes: TransformChange[] = [];
+      const normalizedOriginal = originalText.trim();
+
+      let modified = false;
+      const newAst = this.transformAST(ast, (node: unknown, parent: unknown) => {
+        if (modified) return node; // Only modify first match
+
+        const nodeObj = node as Record<string, unknown>;
+        if (nodeObj.type === 'JSXOpeningElement') {
+          const parentObj = parent as Record<string, unknown>;
+          if (parentObj?.type !== 'JSXElement') return node;
+
+          // Check element name if provided
+          const elementName = this.getElementName(nodeObj.name);
+          if (tagName && elementName.toLowerCase() !== tagName.toLowerCase()) return node;
+
+          // Check text content
+          const children = parentObj.children as unknown[];
+          const nodeText = this.extractTextContent(children);
+
+          if (nodeText && nodeText.trim() === normalizedOriginal) {
+            modified = true;
+            // Replace children with new text
+            parentObj.children = [this.createJSXText(newText)];
+            changes.push({
+              type: 'modify',
+              path: ['children'],
+              oldValue: nodeText,
+              newValue: newText,
+            });
+          }
+        }
+        return node;
+      });
+
+      if (!modified) {
+        return {
+          success: false,
+          error: `Text "${normalizedOriginal.slice(0, 50)}..." not found in source code`,
+        };
+      }
+
+      const newCode = this.generate(newAst);
+      this.cache.set(filePath, { code: newCode, ast: newAst });
+
+      return {
+        success: true,
+        code: newCode,
+        changes,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * 根据源代码位置执行编辑操作
+   * Uses line and column information injected by jsx-id-plugin
+   */
+  async editByPosition(
+    code: string,
+    filePath: string,
+    line: number,
+    column: number,
+    operation: EditOperation
+  ): Promise<AstEditResult> {
+    try {
+      const ast = this.parse(code, filePath);
+      const changes: TransformChange[] = [];
+
+      // 将代码转换为行数组，计算每行的字节偏移
+      const lines = code.split('\n');
+      const lineOffsets = [0];
+      for (let i = 0; i < lines.length; i++) {
+        lineOffsets.push(lineOffsets[i] + lines[i].length + 1); // +1 for newline
+      }
+
+      // 计算目标位置的字节偏移 (SWC 使用字节偏移)
+      const targetOffset = lineOffsets[line - 1] + column;
+
+      let modified = false;
+      const newAst = this.transformAST(ast, (node: unknown, parent: unknown) => {
+        if (modified) return node;
+
+        const nodeObj = node as Record<string, unknown>;
+        if (nodeObj.type === 'JSXOpeningElement') {
+          const span = nodeObj.span as { start: number; end: number } | undefined;
+          if (span) {
+            // 检查节点的起始位置是否在目标位置附近 (允许几个字节的误差)
+            const tolerance = 5;
+            if (Math.abs(span.start - targetOffset) <= tolerance) {
+              modified = true;
+              return this.applyOperation(node, parent, operation, changes);
+            }
+          }
+        }
+        return node;
+      });
+
+      if (!modified) {
+        return {
+          success: false,
+          error: `No JSX element found at line ${line}, column ${column}`,
+        };
+      }
+
+      const newCode = this.generate(newAst);
       this.cache.set(filePath, { code: newCode, ast: newAst });
 
       return {
@@ -581,6 +761,26 @@ export async function editCode(
   request: AstEditRequest
 ): Promise<AstEditResult> {
   return astEditor.edit(code, filePath, request);
+}
+
+export async function editCodeByText(
+  code: string,
+  filePath: string,
+  originalText: string,
+  newText: string,
+  tagName?: string
+): Promise<AstEditResult> {
+  return astEditor.editByText(code, filePath, originalText, newText, tagName);
+}
+
+export async function editCodeByPosition(
+  code: string,
+  filePath: string,
+  line: number,
+  column: number,
+  operation: EditOperation
+): Promise<AstEditResult> {
+  return astEditor.editByPosition(code, filePath, line, column, operation);
 }
 
 export async function batchEditCode(

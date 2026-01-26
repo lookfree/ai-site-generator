@@ -428,8 +428,18 @@ var VisualEditController = class {
       }
     }
     const path = this.getElementPath(element);
+
+    // 提取源代码位置信息 (用于精确的 AST 定位)
+    const jsxFile = element.getAttribute("data-jsx-file") || "";
+    const jsxLine = element.getAttribute("data-jsx-line") || "";
+    const jsxCol = element.getAttribute("data-jsx-col") || "";
+
     return {
       jsxId: element.getAttribute("data-jsx-id") || "",
+      // 源代码位置信息
+      jsxFile,
+      jsxLine: jsxLine ? parseInt(jsxLine, 10) : 0,
+      jsxCol: jsxCol ? parseInt(jsxCol, 10) : 0,
       tagName: element.tagName.toLowerCase(),
       className: element.className,
       textContent: this.getDirectTextContent(element),

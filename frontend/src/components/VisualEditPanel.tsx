@@ -2,6 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 
 interface SelectedElementInfo {
   jsxId: string;
+  // Source code location info (for AST matching)
+  jsxFile?: string;
+  jsxLine?: number;
+  jsxCol?: number;
   tagName: string;
   className: string;
   textContent: string;
@@ -20,7 +24,14 @@ interface VisualEditPanelProps {
 
 interface SavedChanges {
   textContent?: string;
+  originalTextContent?: string;  // Original text for matching in source code
   styles?: Record<string, string>;
+  tagName?: string;  // Element tag for additional matching context
+  className?: string;  // Class for additional matching context
+  // Position info for precise AST matching (highest priority)
+  jsxFile?: string;
+  jsxLine?: number;
+  jsxCol?: number;
 }
 
 interface ElementUpdate {
@@ -85,98 +96,6 @@ function ColorPicker({
   );
 }
 
-// 间距可视化组件
-function SpacingControl({
-  margin,
-  padding,
-  onMarginChange,
-  onPaddingChange,
-}: {
-  margin: { top: string; right: string; bottom: string; left: string };
-  padding: { top: string; right: string; bottom: string; left: string };
-  onMarginChange: (side: string, value: string) => void;
-  onPaddingChange: (side: string, value: string) => void;
-}) {
-  return (
-    <div className="relative w-full aspect-[4/3] bg-orange-50 rounded-lg p-2">
-      {/* Margin labels */}
-      <div className="absolute inset-0 flex items-center justify-center text-[10px] text-orange-400">
-        <span className="absolute top-1 left-1/2 -translate-x-1/2">margin</span>
-      </div>
-
-      {/* Margin inputs */}
-      <input
-        type="text"
-        value={margin.top}
-        onChange={(e) => onMarginChange('top', e.target.value)}
-        className="absolute top-2 left-1/2 -translate-x-1/2 w-8 h-5 text-[10px] text-center bg-transparent border-none focus:outline-none focus:bg-white focus:border-orange-300"
-        placeholder="-"
-      />
-      <input
-        type="text"
-        value={margin.right}
-        onChange={(e) => onMarginChange('right', e.target.value)}
-        className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-5 text-[10px] text-center bg-transparent border-none focus:outline-none focus:bg-white focus:border-orange-300"
-        placeholder="-"
-      />
-      <input
-        type="text"
-        value={margin.bottom}
-        onChange={(e) => onMarginChange('bottom', e.target.value)}
-        className="absolute bottom-2 left-1/2 -translate-x-1/2 w-8 h-5 text-[10px] text-center bg-transparent border-none focus:outline-none focus:bg-white focus:border-orange-300"
-        placeholder="-"
-      />
-      <input
-        type="text"
-        value={margin.left}
-        onChange={(e) => onMarginChange('left', e.target.value)}
-        className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-5 text-[10px] text-center bg-transparent border-none focus:outline-none focus:bg-white focus:border-orange-300"
-        placeholder="-"
-      />
-
-      {/* Padding box */}
-      <div className="absolute inset-6 bg-green-50 rounded flex items-center justify-center">
-        <span className="text-[10px] text-green-400">padding</span>
-
-        {/* Padding inputs */}
-        <input
-          type="text"
-          value={padding.top}
-          onChange={(e) => onPaddingChange('top', e.target.value)}
-          className="absolute top-1 left-1/2 -translate-x-1/2 w-6 h-4 text-[10px] text-center bg-transparent border-none focus:outline-none focus:bg-white"
-          placeholder="-"
-        />
-        <input
-          type="text"
-          value={padding.right}
-          onChange={(e) => onPaddingChange('right', e.target.value)}
-          className="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-4 text-[10px] text-center bg-transparent border-none focus:outline-none focus:bg-white"
-          placeholder="-"
-        />
-        <input
-          type="text"
-          value={padding.bottom}
-          onChange={(e) => onPaddingChange('bottom', e.target.value)}
-          className="absolute bottom-1 left-1/2 -translate-x-1/2 w-6 h-4 text-[10px] text-center bg-transparent border-none focus:outline-none focus:bg-white"
-          placeholder="-"
-        />
-        <input
-          type="text"
-          value={padding.left}
-          onChange={(e) => onPaddingChange('left', e.target.value)}
-          className="absolute left-1 top-1/2 -translate-y-1/2 w-6 h-4 text-[10px] text-center bg-transparent border-none focus:outline-none focus:bg-white"
-          placeholder="-"
-        />
-
-        {/* Content box */}
-        <div className="w-12 h-8 bg-blue-100 rounded flex items-center justify-center">
-          <span className="text-[8px] text-blue-400">content</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }: VisualEditPanelProps) {
   const [textContent, setTextContent] = useState('');
   const [textColor, setTextColor] = useState('');
@@ -187,7 +106,21 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
   const [margin, setMargin] = useState({ top: '', right: '', bottom: '', left: '' });
   const [padding, setPadding] = useState({ top: '', right: '', bottom: '', left: '' });
   const [hasChanges, setHasChanges] = useState(false);
-  const [originalText, setOriginalText] = useState('');
+
+  // Layout states
+  const [flexDirection, setFlexDirection] = useState('row');
+  const [alignItems, setAlignItems] = useState('stretch');
+  const [justifyContent, setJustifyContent] = useState('flex-start');
+
+  // Border states
+  const [borderWidth, setBorderWidth] = useState('');
+  const [borderColor, setBorderColor] = useState('');
+  const [borderStyle, setBorderStyle] = useState('');
+
+  // Effects states
+  const [borderRadius, setBorderRadius] = useState('');
+  const [boxShadow, setBoxShadow] = useState('');
+  const [opacity, setOpacity] = useState('100');
 
   // 存储原始值用于比较
   const [originalValues, setOriginalValues] = useState<{
@@ -199,6 +132,15 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
     textAlign: string;
     margin: { top: string; right: string; bottom: string; left: string };
     padding: { top: string; right: string; bottom: string; left: string };
+    flexDirection: string;
+    alignItems: string;
+    justifyContent: string;
+    borderWidth: string;
+    borderColor: string;
+    borderStyle: string;
+    borderRadius: string;
+    boxShadow: string;
+    opacity: string;
   } | null>(null);
 
   // 解析计算样式
@@ -206,7 +148,6 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
     if (selectedElement) {
       const text = selectedElement.textContent || '';
       setTextContent(text);
-      setOriginalText(text);
 
       const styles = selectedElement.computedStyles || {};
       const color = styles.color || '';
@@ -239,6 +180,30 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
       };
       setPadding(paddingValues);
 
+      // 解析 Layout
+      const fDir = styles.flexDirection || 'row';
+      const aItems = styles.alignItems || 'stretch';
+      const jContent = styles.justifyContent || 'flex-start';
+      setFlexDirection(fDir);
+      setAlignItems(aItems);
+      setJustifyContent(jContent);
+
+      // 解析 Border
+      const bWidth = styles.borderWidth || '';
+      const bColor = styles.borderColor || '';
+      const bStyle = styles.borderStyle || '';
+      setBorderWidth(bWidth);
+      setBorderColor(bColor);
+      setBorderStyle(bStyle);
+
+      // 解析 Effects
+      const bRadius = styles.borderRadius || '';
+      const bShadow = styles.boxShadow || '';
+      const opc = styles.opacity ? String(Math.round(parseFloat(styles.opacity) * 100)) : '100';
+      setBorderRadius(bRadius);
+      setBoxShadow(bShadow);
+      setOpacity(opc);
+
       // 存储原始值
       setOriginalValues({
         textContent: text,
@@ -249,6 +214,15 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
         textAlign: tAlign,
         margin: marginValues,
         padding: paddingValues,
+        flexDirection: fDir,
+        alignItems: aItems,
+        justifyContent: jContent,
+        borderWidth: bWidth,
+        borderColor: bColor,
+        borderStyle: bStyle,
+        borderRadius: bRadius,
+        boxShadow: bShadow,
+        opacity: opc,
       });
 
       // 重置变更状态
@@ -267,14 +241,25 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
       fontWeight !== originalValues.fontWeight ||
       textAlign !== originalValues.textAlign ||
       JSON.stringify(margin) !== JSON.stringify(originalValues.margin) ||
-      JSON.stringify(padding) !== JSON.stringify(originalValues.padding)
+      JSON.stringify(padding) !== JSON.stringify(originalValues.padding) ||
+      flexDirection !== originalValues.flexDirection ||
+      alignItems !== originalValues.alignItems ||
+      justifyContent !== originalValues.justifyContent ||
+      borderWidth !== originalValues.borderWidth ||
+      borderColor !== originalValues.borderColor ||
+      borderStyle !== originalValues.borderStyle ||
+      borderRadius !== originalValues.borderRadius ||
+      boxShadow !== originalValues.boxShadow ||
+      opacity !== originalValues.opacity
     );
-  }, [originalValues, textContent, textColor, bgColor, fontSize, fontWeight, textAlign, margin, padding]);
+  }, [originalValues, textContent, textColor, bgColor, fontSize, fontWeight, textAlign, margin, padding, flexDirection, alignItems, justifyContent, borderWidth, borderColor, borderStyle, borderRadius, boxShadow, opacity]);
 
   // 更新 hasChanges 状态
   useEffect(() => {
-    setHasChanges(checkHasChanges());
-  }, [checkHasChanges]);
+    const changed = checkHasChanges();
+    console.log('[VisualEditPanel] checkHasChanges:', changed, { bgColor, originalBgColor: originalValues?.bgColor });
+    setHasChanges(changed);
+  }, [checkHasChanges, bgColor, originalValues?.bgColor]);
 
   const handleTextChange = useCallback((value: string) => {
     setTextContent(value);
@@ -298,9 +283,16 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
 
     const changes: SavedChanges = {};
 
-    // 文本变更
+    // 文本变更 - include original text and position info for source code matching
     if (originalValues && textContent !== originalValues.textContent) {
       changes.textContent = textContent;
+      changes.originalTextContent = originalValues.textContent;
+      changes.tagName = selectedElement.tagName;
+      changes.className = selectedElement.className;
+      // Include position info for precise AST matching
+      changes.jsxFile = selectedElement.jsxFile;
+      changes.jsxLine = selectedElement.jsxLine;
+      changes.jsxCol = selectedElement.jsxCol;
     }
 
     // 样式变更
@@ -319,6 +311,18 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
       if (padding.right !== originalValues.padding.right) styleChanges.paddingRight = padding.right;
       if (padding.bottom !== originalValues.padding.bottom) styleChanges.paddingBottom = padding.bottom;
       if (padding.left !== originalValues.padding.left) styleChanges.paddingLeft = padding.left;
+      // Layout
+      if (flexDirection !== originalValues.flexDirection) styleChanges.flexDirection = flexDirection;
+      if (alignItems !== originalValues.alignItems) styleChanges.alignItems = alignItems;
+      if (justifyContent !== originalValues.justifyContent) styleChanges.justifyContent = justifyContent;
+      // Border
+      if (borderWidth !== originalValues.borderWidth) styleChanges.borderWidth = borderWidth;
+      if (borderColor !== originalValues.borderColor) styleChanges.borderColor = borderColor;
+      if (borderStyle !== originalValues.borderStyle) styleChanges.borderStyle = borderStyle;
+      // Effects
+      if (borderRadius !== originalValues.borderRadius) styleChanges.borderRadius = borderRadius;
+      if (boxShadow !== originalValues.boxShadow) styleChanges.boxShadow = boxShadow;
+      if (opacity !== originalValues.opacity) styleChanges.opacity = String(parseInt(opacity) / 100);
     }
 
     if (Object.keys(styleChanges).length > 0) {
@@ -326,7 +330,31 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
     }
 
     onSave(selectedElement.jsxId, changes);
-  }, [selectedElement, onSave, hasChanges, originalValues, textContent, textColor, bgColor, fontSize, fontWeight, textAlign, margin, padding]);
+
+    // 更新 originalValues 以反映保存后的状态
+    setOriginalValues({
+      textContent,
+      textColor,
+      bgColor,
+      fontSize,
+      fontWeight,
+      textAlign,
+      margin,
+      padding,
+      flexDirection,
+      alignItems,
+      justifyContent,
+      borderWidth,
+      borderColor,
+      borderStyle,
+      borderRadius,
+      boxShadow,
+      opacity,
+    });
+
+    // 重置 hasChanges 状态
+    setHasChanges(false);
+  }, [selectedElement, onSave, hasChanges, originalValues, textContent, textColor, bgColor, fontSize, fontWeight, textAlign, margin, padding, flexDirection, alignItems, justifyContent, borderWidth, borderColor, borderStyle, borderRadius, boxShadow, opacity]);
 
   if (!selectedElement) {
     return (
@@ -436,18 +464,197 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
       {/* Spacing */}
       <div className="px-4 py-3 border-b border-gray-100">
         <h3 className="text-xs font-semibold text-gray-700 mb-3">Spacing</h3>
-        <SpacingControl
-          margin={margin}
-          padding={padding}
-          onMarginChange={(side, value) => {
-            setMargin(prev => ({ ...prev, [side]: value }));
-            handleStyleChange(`margin${side.charAt(0).toUpperCase() + side.slice(1)}`, value);
-          }}
-          onPaddingChange={(side, value) => {
-            setPadding(prev => ({ ...prev, [side]: value }));
-            handleStyleChange(`padding${side.charAt(0).toUpperCase() + side.slice(1)}`, value);
-          }}
-        />
+        <div className="space-y-3">
+          {/* Margin */}
+          <div>
+            <label className="text-xs text-gray-500 block mb-2">Margin</label>
+            <div className="grid grid-cols-4 gap-2">
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-gray-400 mb-1">T</span>
+                <input
+                  type="text"
+                  value={margin.top}
+                  onChange={(e) => {
+                    setMargin(prev => ({ ...prev, top: e.target.value }));
+                    handleStyleChange('marginTop', e.target.value);
+                  }}
+                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="0"
+                />
+              </div>
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-gray-400 mb-1">R</span>
+                <input
+                  type="text"
+                  value={margin.right}
+                  onChange={(e) => {
+                    setMargin(prev => ({ ...prev, right: e.target.value }));
+                    handleStyleChange('marginRight', e.target.value);
+                  }}
+                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="0"
+                />
+              </div>
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-gray-400 mb-1">B</span>
+                <input
+                  type="text"
+                  value={margin.bottom}
+                  onChange={(e) => {
+                    setMargin(prev => ({ ...prev, bottom: e.target.value }));
+                    handleStyleChange('marginBottom', e.target.value);
+                  }}
+                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="0"
+                />
+              </div>
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-gray-400 mb-1">L</span>
+                <input
+                  type="text"
+                  value={margin.left}
+                  onChange={(e) => {
+                    setMargin(prev => ({ ...prev, left: e.target.value }));
+                    handleStyleChange('marginLeft', e.target.value);
+                  }}
+                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="0"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Padding */}
+          <div>
+            <label className="text-xs text-gray-500 block mb-2">Padding</label>
+            <div className="grid grid-cols-4 gap-2">
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-gray-400 mb-1">T</span>
+                <input
+                  type="text"
+                  value={padding.top}
+                  onChange={(e) => {
+                    setPadding(prev => ({ ...prev, top: e.target.value }));
+                    handleStyleChange('paddingTop', e.target.value);
+                  }}
+                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="0"
+                />
+              </div>
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-gray-400 mb-1">R</span>
+                <input
+                  type="text"
+                  value={padding.right}
+                  onChange={(e) => {
+                    setPadding(prev => ({ ...prev, right: e.target.value }));
+                    handleStyleChange('paddingRight', e.target.value);
+                  }}
+                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="0"
+                />
+              </div>
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-gray-400 mb-1">B</span>
+                <input
+                  type="text"
+                  value={padding.bottom}
+                  onChange={(e) => {
+                    setPadding(prev => ({ ...prev, bottom: e.target.value }));
+                    handleStyleChange('paddingBottom', e.target.value);
+                  }}
+                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="0"
+                />
+              </div>
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-gray-400 mb-1">L</span>
+                <input
+                  type="text"
+                  value={padding.left}
+                  onChange={(e) => {
+                    setPadding(prev => ({ ...prev, left: e.target.value }));
+                    handleStyleChange('paddingLeft', e.target.value);
+                  }}
+                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="0"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Layout */}
+      <div className="px-4 py-3 border-b border-gray-100">
+        <h3 className="text-xs font-semibold text-gray-700 mb-3">Layout</h3>
+        <div className="space-y-3">
+          {/* Direction */}
+          <div>
+            <label className="text-xs text-gray-500 block mb-2">Direction</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setFlexDirection('row');
+                  handleStyleChange('flexDirection', 'row');
+                }}
+                className={`flex-1 h-9 flex items-center justify-center border rounded transition-colors ${
+                  flexDirection === 'row'
+                    ? 'bg-blue-50 border-blue-300 text-blue-600'
+                    : 'border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                </svg>
+              </button>
+              <button
+                onClick={() => {
+                  setFlexDirection('column');
+                  handleStyleChange('flexDirection', 'column');
+                }}
+                className={`flex-1 h-9 flex items-center justify-center border rounded transition-colors ${
+                  flexDirection === 'column'
+                    ? 'bg-blue-50 border-blue-300 text-blue-600'
+                    : 'border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Alignment */}
+          <div>
+            <label className="text-xs text-gray-500 block mb-2">Alignment</label>
+            <div className="grid grid-cols-3 gap-1 p-1 border border-gray-200 rounded">
+              {[
+                ['flex-start', 'flex-start'], ['flex-start', 'center'], ['flex-start', 'flex-end'],
+                ['center', 'flex-start'], ['center', 'center'], ['center', 'flex-end'],
+                ['flex-end', 'flex-start'], ['flex-end', 'center'], ['flex-end', 'flex-end'],
+              ].map(([align, justify], i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    setAlignItems(align);
+                    setJustifyContent(justify);
+                    handleStyleChange('alignItems', align);
+                    handleStyleChange('justifyContent', justify);
+                  }}
+                  className={`h-7 flex items-center justify-center rounded transition-colors ${
+                    alignItems === align && justifyContent === justify
+                      ? 'bg-blue-100 text-blue-600'
+                      : 'hover:bg-gray-100'
+                  }`}
+                >
+                  <div className="w-3 h-3 bg-current rounded-sm opacity-50" />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Typography */}
@@ -519,6 +726,127 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Border */}
+      <div className="px-4 py-3 border-b border-gray-100">
+        <h3 className="text-xs font-semibold text-gray-700 mb-3">Border</h3>
+        <div className="space-y-3">
+          {/* Border Width */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-600">Width</span>
+            <select
+              value={borderWidth}
+              onChange={(e) => {
+                setBorderWidth(e.target.value);
+                handleStyleChange('borderWidth', e.target.value);
+              }}
+              className="px-2 py-1 text-sm border border-gray-200 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Select</option>
+              <option value="0px">None</option>
+              <option value="1px">1px</option>
+              <option value="2px">2px</option>
+              <option value="3px">3px</option>
+              <option value="4px">4px</option>
+            </select>
+          </div>
+
+          {/* Border Color */}
+          <ColorPicker
+            label="Color"
+            value={borderColor}
+            onChange={(color) => {
+              setBorderColor(color);
+              handleStyleChange('borderColor', color);
+            }}
+          />
+
+          {/* Border Style */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-600">Style</span>
+            <select
+              value={borderStyle}
+              onChange={(e) => {
+                setBorderStyle(e.target.value);
+                handleStyleChange('borderStyle', e.target.value);
+              }}
+              className="px-2 py-1 text-sm border border-gray-200 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Select</option>
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+              <option value="dotted">Dotted</option>
+              <option value="none">None</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Effects */}
+      <div className="px-4 py-3 border-b border-gray-100">
+        <h3 className="text-xs font-semibold text-gray-700 mb-3">Effects</h3>
+        <div className="space-y-3">
+          {/* Border Radius */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-600">Border radius</span>
+            <select
+              value={borderRadius}
+              onChange={(e) => {
+                setBorderRadius(e.target.value);
+                handleStyleChange('borderRadius', e.target.value);
+              }}
+              className="px-2 py-1 text-sm border border-gray-200 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Select</option>
+              <option value="0px">None</option>
+              <option value="4px">Small</option>
+              <option value="8px">Medium</option>
+              <option value="12px">Large</option>
+              <option value="16px">XL</option>
+              <option value="9999px">Full</option>
+            </select>
+          </div>
+
+          {/* Shadow */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-600">Shadow</span>
+            <select
+              value={boxShadow}
+              onChange={(e) => {
+                setBoxShadow(e.target.value);
+                handleStyleChange('boxShadow', e.target.value);
+              }}
+              className="px-2 py-1 text-sm border border-gray-200 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Select</option>
+              <option value="none">None</option>
+              <option value="0 1px 2px 0 rgba(0,0,0,0.05)">Small</option>
+              <option value="0 4px 6px -1px rgba(0,0,0,0.1)">Medium</option>
+              <option value="0 10px 15px -3px rgba(0,0,0,0.1)">Large</option>
+              <option value="0 25px 50px -12px rgba(0,0,0,0.25)">XL</option>
+            </select>
+          </div>
+
+          {/* Opacity */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-gray-600">Opacity</span>
+              <span className="text-xs text-gray-500">{opacity}%</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={opacity}
+              onChange={(e) => {
+                setOpacity(e.target.value);
+                handleStyleChange('opacity', String(parseInt(e.target.value) / 100));
+              }}
+              className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+            />
           </div>
         </div>
       </div>
