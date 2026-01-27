@@ -5,9 +5,10 @@
 
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
-import { readFile, writeFile } from 'fs/promises';
+import { readFile, writeFile, rm } from 'fs/promises';
 import { join } from 'path';
 import type { ViteInstance, ViteManagerConfig, ViteStatus, LogEvent, ExitEvent } from '../types';
+import { dependencyManager } from './dependency-manager';
 
 const DEFAULT_CONFIG: ViteManagerConfig = {
   basePort: 5200,
@@ -21,6 +22,7 @@ export class ViteDevServerManager extends EventEmitter {
   private portPool: Set<number> = new Set();
   private config: ViteManagerConfig;
   private cleanupTimer: NodeJS.Timeout | null = null;
+  private bunBinary = process.env.BUN_BINARY || process.execPath;
 
   constructor(config: Partial<ViteManagerConfig> = {}) {
     super();
@@ -65,11 +67,14 @@ export class ViteDevServerManager extends EventEmitter {
     this.instances.set(projectId, instance);
 
     try {
-      // 确保 vite.config 配置正确 (allowedHosts 和 base)
+      // 确保 jsx-tagger 依赖已安装
+      await this.ensureJsxTaggerDependency(projectPath);
+
+      // 确保 vite.config 配置正确 (jsxTaggerPlugin, allowedHosts, base, hmr)
       await this.ensureViteConfig(projectId, projectPath);
 
       // 启动 Vite 进程
-      const proc = spawn('bun', [
+      const proc = spawn(this.bunBinary, [
         'run', 'vite',
         '--host', '0.0.0.0',
         '--port', String(port),
@@ -139,15 +144,96 @@ export class ViteDevServerManager extends EventEmitter {
   }
 
   /**
-   * 确保 vite.config 配置正确 (allowedHosts 和 base)
+   * 确保 jsx-tagger 依赖已安装
+   */
+  private async ensureJsxTaggerDependency(projectPath: string): Promise<void> {
+    const packageJsonPath = join(projectPath, 'package.json');
+    const jsxTaggerDep = process.env.JSX_TAGGER_DEP || 'file:/app/packages/vite-plugin-jsx-tagger';
+
+    try {
+      const content = await readFile(packageJsonPath, 'utf-8');
+      const packageJson = JSON.parse(content);
+
+      // 检查是否已有 vite-plugin-jsx-tagger 依赖
+      const hasDep = packageJson.dependencies?.['vite-plugin-jsx-tagger'] ||
+                     packageJson.devDependencies?.['vite-plugin-jsx-tagger'];
+
+      if (!hasDep) {
+        console.log(`[ViteManager] Adding vite-plugin-jsx-tagger dependency to package.json`);
+
+        // 添加到 devDependencies
+        if (!packageJson.devDependencies) {
+          packageJson.devDependencies = {};
+        }
+        packageJson.devDependencies['vite-plugin-jsx-tagger'] = jsxTaggerDep;
+
+        await writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2), 'utf-8');
+
+        // 删除 node_modules 并重新安装
+        console.log(`[ViteManager] Reinstalling dependencies...`);
+        const nodeModulesPath = join(projectPath, 'node_modules');
+        try {
+          await rm(nodeModulesPath, { recursive: true, force: true });
+        } catch {
+          // node_modules 可能不存在
+        }
+
+        const result = await dependencyManager.install(projectPath);
+        if (!result.success) {
+          console.error(`[ViteManager] Failed to install dependencies:`, result.logs.join('\n'));
+        } else {
+          console.log(`[ViteManager] Dependencies installed successfully`);
+        }
+      }
+    } catch (error) {
+      console.warn(`[ViteManager] Failed to ensure jsx-tagger dependency:`, error);
+    }
+  }
+
+  /**
+   * 确保 vite.config 配置正确 (jsxTaggerPlugin, allowedHosts, base, hmr)
    */
   private async ensureViteConfig(projectId: string, projectPath: string): Promise<void> {
     const configPath = join(projectPath, 'vite.config.ts');
     const basePath = `/p/${projectId}/`;
+    const idPrefix = projectId.slice(0, 8);
+    // fly-server 的公共域名，用于 HMR WebSocket 直连
+    const flyPublicHost = process.env.FLY_PUBLIC_HOST || 'ai-site-preview.fly.dev';
+    const isHttps = flyPublicHost.includes('fly.dev') || process.env.FLY_HTTPS === 'true';
 
     try {
       let content = await readFile(configPath, 'utf-8');
       let modified = false;
+
+      // 0. 确保 jsxTaggerPlugin 被导入和使用 (用于可视化编辑)
+      if (!content.includes('jsxTaggerPlugin')) {
+        // 添加 import
+        if (content.includes("from 'vite'")) {
+          content = content.replace(
+            /import\s*\{[^}]*\}\s*from\s*['"]vite['"]/,
+            match => `${match}\nimport { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';`
+          );
+        } else {
+          // 在文件开头添加 import
+          content = `import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';\n${content}`;
+        }
+
+        // 添加插件到 plugins 数组 (必须在 react() 之前)
+        const jsxTaggerPluginConfig = `jsxTaggerPlugin({
+      idPrefix: '${idPrefix}',
+      removeInProduction: false,
+    }),`;
+
+        if (content.includes('plugins:')) {
+          // 在 plugins 数组开头添加
+          content = content.replace(
+            /plugins:\s*\[/,
+            `plugins: [\n    // JSX Tagger 必须在 React 插件之前\n    ${jsxTaggerPluginConfig}`
+          );
+        }
+        modified = true;
+        console.log(`[ViteManager] Added jsxTaggerPlugin to vite.config.ts for visual editing`);
+      }
 
       // 1. 添加或更新 base 配置
       if (content.includes('base:')) {
@@ -163,25 +249,55 @@ export class ViteDevServerManager extends EventEmitter {
         modified = true;
       }
 
-      // 2. 添加 allowedHosts 配置
-      if (!content.includes('allowedHosts')) {
-        if (content.includes('server:')) {
+      // 2. 添加或更新 server 配置 (包括 allowedHosts 和 hmr)
+      // HMR 配置让 Vite client 直接连接到 fly-server，绕过 backend proxy
+      // 注意：path 使用完整路径，Vite 会直接使用这个路径（不会与 base 叠加）
+      const hmrConfig = `
+    hmr: {
+      protocol: '${isHttps ? 'wss' : 'ws'}',
+      host: '${flyPublicHost}',
+      clientPort: ${isHttps ? 443 : 3000},
+      path: '/hmr/${projectId}',
+      overlay: true,
+    },`;
+
+      if (content.includes('server:')) {
+        // server 配置已存在
+        if (!content.includes('allowedHosts')) {
           content = content.replace(
             /server:\s*\{/,
             "server: {\n    allowedHosts: 'all',"
           );
-        } else if (content.includes('defineConfig({')) {
-          content = content.replace(
-            /defineConfig\(\{/,
-            "defineConfig({\n  server: {\n    allowedHosts: 'all',\n  },"
-          );
+          modified = true;
         }
+        // 更新或添加 hmr 配置
+        if (content.includes('hmr:')) {
+          // 替换现有的 hmr 配置
+          content = content.replace(
+            /hmr:\s*\{[^}]*\},?/,
+            hmrConfig
+          );
+          modified = true;
+        } else {
+          // 在 server 配置中添加 hmr
+          content = content.replace(
+            /server:\s*\{/,
+            `server: {${hmrConfig}`
+          );
+          modified = true;
+        }
+      } else if (content.includes('defineConfig({')) {
+        // 添加完整的 server 配置
+        content = content.replace(
+          /defineConfig\(\{/,
+          `defineConfig({\n  server: {\n    allowedHosts: 'all',${hmrConfig}\n  },`
+        );
         modified = true;
       }
 
       if (modified) {
         await writeFile(configPath, content, 'utf-8');
-        console.log(`[ViteManager] Updated vite.config.ts with base: ${basePath} and allowedHosts`);
+        console.log(`[ViteManager] Updated vite.config.ts with base: ${basePath}, allowedHosts, and HMR config for ${flyPublicHost}`);
       }
     } catch (error) {
       console.warn(`[ViteManager] Failed to update vite.config.ts:`, error);
@@ -277,19 +393,23 @@ export class ViteDevServerManager extends EventEmitter {
     const { process: proc, projectId } = instance;
 
     proc.stdout?.on('data', (data: Buffer) => {
+      const message = data.toString();
+      console.log(`[Vite:${projectId.slice(0, 8)}] ${message.trim()}`);
       const event: LogEvent = {
         projectId,
         type: 'stdout',
-        message: data.toString()
+        message
       };
       this.emit('log', event);
     });
 
     proc.stderr?.on('data', (data: Buffer) => {
+      const message = data.toString();
+      console.error(`[Vite:${projectId.slice(0, 8)}:ERR] ${message.trim()}`);
       const event: LogEvent = {
         projectId,
         type: 'stderr',
-        message: data.toString()
+        message
       };
       this.emit('log', event);
     });
