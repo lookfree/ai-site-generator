@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useEffect, useState } from 'react';
+import { useCallback, useMemo, useEffect, useState, useRef } from 'react';
 import {
   PropertyPanel,
   SaveButton,
@@ -15,6 +15,9 @@ import {
   type PositionInfo,
 } from '../services/api';
 
+// 标记最后一个 action 是否来自文本编辑框（用于控制 Save 按钮显示）
+let lastActionFromTextEdit = false;
+
 interface VisualEditorPanelProps {
   projectId?: string;
 }
@@ -28,7 +31,7 @@ function dedupeActions(actions: EditAction[]): EditAction[] {
 }
 
 export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps) {
-  const { refreshElementInfo } = useIframeCommunication();
+  const { refreshElementInfo, onMessage } = useIframeCommunication();
 
   const selectedElement = useEditorStore(state => state.selectedElement);
   const history = useEditorStore(state => state.history);
@@ -36,10 +39,42 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
   const clearHistory = useEditorStore(state => state.clearHistory);
 
   const [lastSavedIndex, setLastSavedIndex] = useState(-1);
+  // 追踪是否有来自属性面板的更改（非文本编辑框）
+  const [hasPropertyChanges, setHasPropertyChanges] = useState(false);
+
+  // 保存函数的 ref，用于在 message handler 中调用
+  const handleSaveRef = useRef<() => Promise<void>>();
 
   useEffect(() => {
     setLastSavedIndex(-1);
+    setHasPropertyChanges(false);
   }, [projectId]);
+
+  // 监听 TEXT_EDIT_CONFIRMED 消息，触发自动保存
+  useEffect(() => {
+    const unsubscribe = onMessage('TEXT_EDIT_CONFIRMED', () => {
+      console.log('[VisualEditorPanel] TEXT_EDIT_CONFIRMED - triggering auto-save');
+      // 标记这个 action 来自文本编辑
+      lastActionFromTextEdit = true;
+      // 延迟执行保存，确保 TEXT_CHANGED 的 action 已经添加到 history
+      setTimeout(() => {
+        if (handleSaveRef.current) {
+          handleSaveRef.current();
+        }
+      }, 50);
+    });
+    return unsubscribe;
+  }, [onMessage]);
+
+  // 监听 history 变化，判断是否来自属性面板
+  useEffect(() => {
+    if (historyIndex > lastSavedIndex && !lastActionFromTextEdit) {
+      // 如果不是来自文本编辑框的 action，标记为属性面板更改
+      setHasPropertyChanges(true);
+    }
+    // 重置标记
+    lastActionFromTextEdit = false;
+  }, [historyIndex, lastSavedIndex]);
 
   const pendingActions = useMemo(() => {
     if (historyIndex <= lastSavedIndex) return [];
@@ -184,6 +219,7 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
     // This fixes the issue where editing the same element after save wouldn't show "Unsaved changes"
     clearHistory();
     setLastSavedIndex(-1);
+    setHasPropertyChanges(false); // 重置属性面板更改标记
 
     // HMR will automatically update the preview when fly-server receives the file update
     // No need to manually reload iframe - this would cause white screen
@@ -196,19 +232,25 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
     }, 800); // 等待 HMR 完成 (800ms 应该足够)
   }, [projectId, hasChanges, pendingActions, historyIndex, selectedElement, clearHistory, refreshElementInfo]);
 
+  // 更新 handleSaveRef 以便在 message handler 中调用
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+  }, [handleSave]);
+
   return (
     <div className="h-full flex flex-col">
-      {/* Only show header with save button when there are changes or element selected */}
-      {(hasChanges || selectedElement) && (
+      {/* 只在属性面板有更改或选中元素时显示 header */}
+      {/* Save 按钮只在属性面板修改时显示，文本编辑框的修改会自动保存 */}
+      {(hasPropertyChanges || selectedElement) && (
         <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between bg-white">
           <div className="flex items-center gap-2">
-            {hasChanges && (
+            {hasPropertyChanges && (
               <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
                 Unsaved changes
               </span>
             )}
           </div>
-          <SaveButton onSave={handleSave} />
+          {hasPropertyChanges && <SaveButton onSave={handleSave} />}
         </div>
       )}
       <div className="flex-1 overflow-hidden bg-white">

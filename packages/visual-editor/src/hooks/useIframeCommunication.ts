@@ -135,12 +135,12 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
         }
 
         case 'TEXT_CHANGED': {
-          // 用户在 iframe 中内联编辑文字时，记录到历史
-          // 使用 iframe 发送的完整信息，避免依赖可能过时的 selectedElement
+          // 文本编辑框实时输入时，只更新 selectedElement 的 textContent（用于实时预览）
+          // 不添加到 history，避免每次按键都创建 action
+          // 最终保存由 TEXT_EDIT_CONFIRMED 处理
           const {
             jsxId,
             text,
-            originalText,
             tagName,
             className,
             jsxFile,
@@ -157,60 +157,19 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
             jsxCol?: number;
           };
           const currentElement = useEditorStore.getState().selectedElement;
-          console.log('[useIframeCommunication] TEXT_CHANGED received:', {
-            jsxId,
-            text,
-            originalText,
-            tagName,
-            hasCurrentElement: !!currentElement,
-          });
 
-          if (jsxId) {
-            // 优先使用 iframe 发送的原始文本，回退到 selectedElement
-            const oldValue = originalText !== undefined ? originalText : currentElement?.textContent;
-            // 优先使用 iframe 发送的位置信息
-            const filePath = jsxFile ?? currentElement?.jsxFile;
-            const line = jsxLine ?? currentElement?.jsxLine;
-            const col = jsxCol ?? currentElement?.jsxCol;
-
-            console.log('[useIframeCommunication] Creating text action:', {
-              jsxId,
-              oldValue,
-              newValue: text,
-              filePath,
-              jsxLine: line,
-              jsxCol: col,
+          // 只更新 selectedElement 的 textContent，不添加到 history
+          if (currentElement && currentElement.jsxId === jsxId) {
+            setSelectedElement({
+              ...currentElement,
+              textContent: text,
+              // 如果 iframe 提供了新的元信息，也更新
+              ...(tagName && { tagName }),
+              ...(className && { className }),
+              ...(jsxFile && { jsxFile }),
+              ...(jsxLine && { jsxLine }),
+              ...(jsxCol && { jsxCol }),
             });
-
-            const action: EditAction = {
-              id: `text-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-              timestamp: Date.now(),
-              jsxId,
-              type: 'text',
-              oldValue: oldValue,
-              newValue: text,
-              filePath: filePath,
-              jsxLine: line,
-              jsxCol: col,
-              // 存储 tagName 和 className 供保存时使用
-              tagName: tagName ?? currentElement?.tagName,
-              className: className ?? currentElement?.className,
-            };
-            addAction(action);
-
-            // 同步更新 selectedElement 的 textContent 和其他信息
-            if (currentElement) {
-              setSelectedElement({
-                ...currentElement,
-                textContent: text,
-                // 如果 iframe 提供了新的元信息，也更新
-                ...(tagName && { tagName }),
-                ...(className && { className }),
-                ...(jsxFile && { jsxFile }),
-                ...(jsxLine && { jsxLine }),
-                ...(jsxCol && { jsxCol }),
-              });
-            }
           }
           break;
         }
@@ -240,6 +199,58 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
               computedStyles: refreshedInfo.computedStyles,
               boundingRect: refreshedInfo.boundingRect,
             });
+          }
+          break;
+        }
+
+        case 'TEXT_EDIT_CONFIRMED': {
+          // 文本编辑确认 - 添加 action 到 history，然后 handler 会触发保存
+          const {
+            jsxId,
+            text,
+            originalText,
+            tagName,
+            className,
+            jsxFile,
+            jsxLine,
+            jsxCol,
+          } = payload as {
+            jsxId: string;
+            text: string;
+            originalText?: string;
+            tagName?: string;
+            className?: string;
+            jsxFile?: string;
+            jsxLine?: number;
+            jsxCol?: number;
+          };
+          const currentElement = useEditorStore.getState().selectedElement;
+          console.log('[useIframeCommunication] TEXT_EDIT_CONFIRMED received:', {
+            jsxId,
+            text,
+            originalText,
+          });
+
+          if (jsxId && text !== originalText) {
+            // 创建 action 并添加到 history
+            const filePath = jsxFile ?? currentElement?.jsxFile;
+            const line = jsxLine ?? currentElement?.jsxLine;
+            const col = jsxCol ?? currentElement?.jsxCol;
+
+            const action: EditAction = {
+              id: `text-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+              timestamp: Date.now(),
+              jsxId,
+              type: 'text',
+              oldValue: originalText,
+              newValue: text,
+              filePath: filePath,
+              jsxLine: line,
+              jsxCol: col,
+              tagName: tagName ?? currentElement?.tagName,
+              className: className ?? currentElement?.className,
+            };
+            addAction(action);
           }
           break;
         }

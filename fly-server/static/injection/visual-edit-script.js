@@ -5,8 +5,10 @@ var VisualEditController = class {
     this.hoveredElement = null;
     this.highlightOverlay = null;
     this.hoverOverlay = null;
+    this.textEditBox = null;
     this.resizeHandles = /* @__PURE__ */ new Map();
     this.isEditMode = false;
+    this.isTextEditing = false;
     this.isResizing = false;
     this.resizeHandle = null;
     this.dragStartPos = { x: 0, y: 0 };
@@ -14,15 +16,15 @@ var VisualEditController = class {
     // ========== 文本编辑模式 ==========
     // 存储进入编辑模式时的原始文本
     this.originalTextBeforeEdit = "";
-    this.handleTextInput = () => {
-      if (!this.selectedElement) return;
-      const text = this.getDirectTextContent(this.selectedElement);
+    // 文本框输入事件 - 实时同步到元素和 frontend
+    this.handleTextBoxInput = () => {
+      if (!this.selectedElement || !this.textEditBox) return;
+      const text = this.textEditBox.value;
+      this.updateElementText(this.selectedElement, text);
       this.postMessage("TEXT_CHANGED", {
         jsxId: this.selectedElement.getAttribute("data-jsx-id"),
         text,
-        // 发送原始文本（进入编辑模式时的值），用于准确的代码替换
         originalText: this.originalTextBeforeEdit,
-        // 发送元素元数据，避免 frontend 状态过时导致的问题
         tagName: this.selectedElement.tagName.toLowerCase(),
         className: this.selectedElement.className,
         jsxFile: this.selectedElement.getAttribute("data-jsx-file") || void 0,
@@ -30,13 +32,42 @@ var VisualEditController = class {
         jsxCol: this.selectedElement.getAttribute("data-jsx-col") ? Number(this.selectedElement.getAttribute("data-jsx-col")) : void 0
       });
     };
-    this.handleTextBlur = () => {
-      this.exitTextEditMode();
+    // 文本框键盘事件 - Enter 确认, Escape 取消
+    this.handleTextBoxKeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        this.confirmTextEdit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        if (this.selectedElement) {
+          this.updateElementText(this.selectedElement, this.originalTextBeforeEdit);
+          this.postMessage("TEXT_CHANGED", {
+            jsxId: this.selectedElement.getAttribute("data-jsx-id"),
+            text: this.originalTextBeforeEdit,
+            originalText: this.originalTextBeforeEdit,
+            tagName: this.selectedElement.tagName.toLowerCase(),
+            className: this.selectedElement.className,
+            jsxFile: this.selectedElement.getAttribute("data-jsx-file") || void 0,
+            jsxLine: this.selectedElement.getAttribute("data-jsx-line") ? Number(this.selectedElement.getAttribute("data-jsx-line")) : void 0,
+            jsxCol: this.selectedElement.getAttribute("data-jsx-col") ? Number(this.selectedElement.getAttribute("data-jsx-col")) : void 0
+          });
+        }
+        this.exitTextEditMode();
+      }
+    };
+    // 文本框失焦事件 - 确认编辑并自动保存
+    this.handleTextBoxBlur = () => {
+      setTimeout(() => {
+        if (this.isTextEditing) {
+          this.confirmTextEdit();
+        }
+      }, 100);
     };
     this.init();
   }
   init() {
     this.createOverlays();
+    this.createTextEditBox();
     this.createResizeHandles();
     this.setupEventListeners();
     this.setupMessageHandler();
@@ -68,6 +99,31 @@ var VisualEditController = class {
     `;
     document.body.appendChild(this.highlightOverlay);
     document.body.appendChild(this.hoverOverlay);
+  }
+  createTextEditBox() {
+    this.textEditBox = document.createElement("input");
+    this.textEditBox.id = "__visual_edit_text_box__";
+    this.textEditBox.type = "text";
+    this.textEditBox.style.cssText = `
+      position: fixed;
+      z-index: 1000001;
+      display: none;
+      min-width: 200px;
+      max-width: 400px;
+      padding: 8px 12px;
+      font-size: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #fff;
+      background: #1e293b;
+      border: 2px solid #3b82f6;
+      border-radius: 6px;
+      outline: none;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    `;
+    this.textEditBox.addEventListener("input", this.handleTextBoxInput);
+    this.textEditBox.addEventListener("keydown", this.handleTextBoxKeydown);
+    this.textEditBox.addEventListener("blur", this.handleTextBoxBlur);
+    document.body.appendChild(this.textEditBox);
   }
   createResizeHandles() {
     const handles = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
@@ -595,25 +651,49 @@ var VisualEditController = class {
     }
   }
   enterTextEditMode() {
-    if (!this.selectedElement) return;
+    if (!this.selectedElement || !this.textEditBox) return;
     this.originalTextBeforeEdit = this.getDirectTextContent(this.selectedElement);
-    this.selectedElement.contentEditable = "true";
-    this.selectedElement.focus();
-    const range = document.createRange();
-    range.selectNodeContents(this.selectedElement);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+    this.isTextEditing = true;
+    const rect = this.selectedElement.getBoundingClientRect();
+    this.textEditBox.style.left = `${rect.left}px`;
+    this.textEditBox.style.top = `${rect.bottom + 8}px`;
+    this.textEditBox.style.minWidth = `${Math.max(200, rect.width)}px`;
+    if (rect.bottom + 50 > window.innerHeight) {
+      this.textEditBox.style.top = `${rect.top - 44}px`;
+    }
+    this.textEditBox.value = this.originalTextBeforeEdit;
+    this.textEditBox.style.display = "block";
+    this.textEditBox.focus();
+    this.textEditBox.select();
     this.highlightOverlay.style.borderColor = "#8b5cf6";
-    this.selectedElement.addEventListener("input", this.handleTextInput);
-    this.selectedElement.addEventListener("blur", this.handleTextBlur);
   }
   exitTextEditMode() {
-    if (!this.selectedElement) return;
-    this.selectedElement.contentEditable = "false";
+    if (!this.textEditBox) return;
+    this.isTextEditing = false;
+    this.textEditBox.style.display = "none";
     this.highlightOverlay.style.borderColor = "#3b82f6";
-    this.selectedElement.removeEventListener("input", this.handleTextInput);
-    this.selectedElement.removeEventListener("blur", this.handleTextBlur);
+  }
+  // 确认文本编辑并发送保存信号
+  confirmTextEdit() {
+    if (!this.selectedElement || !this.textEditBox) {
+      this.exitTextEditMode();
+      return;
+    }
+    const currentText = this.textEditBox.value;
+    const originalText = this.originalTextBeforeEdit;
+    if (currentText !== originalText) {
+      this.postMessage("TEXT_EDIT_CONFIRMED", {
+        jsxId: this.selectedElement.getAttribute("data-jsx-id"),
+        text: currentText,
+        originalText,
+        tagName: this.selectedElement.tagName.toLowerCase(),
+        className: this.selectedElement.className,
+        jsxFile: this.selectedElement.getAttribute("data-jsx-file") || void 0,
+        jsxLine: this.selectedElement.getAttribute("data-jsx-line") ? Number(this.selectedElement.getAttribute("data-jsx-line")) : void 0,
+        jsxCol: this.selectedElement.getAttribute("data-jsx-col") ? Number(this.selectedElement.getAttribute("data-jsx-col")) : void 0
+      });
+    }
+    this.exitTextEditMode();
   }
   // ========== 模式控制 ==========
   enableEditMode() {
