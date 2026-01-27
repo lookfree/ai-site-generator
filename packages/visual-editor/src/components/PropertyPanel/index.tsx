@@ -9,6 +9,7 @@ import ElementInfo from './ElementInfo';
 
 export default function PropertyPanel() {
   const selectedElement = useEditorStore(state => state.selectedElement);
+  const isSaving = useEditorStore(state => state.isSaving);
 
   if (!selectedElement) {
     return (
@@ -82,11 +83,25 @@ export default function PropertyPanel() {
 
   return (
     <div className="property-panel">
+      {/* Loading indicator when saving text */}
+      {isSaving && (
+        <div className="saving-indicator">
+          <div className="saving-spinner" />
+          <span>Updating...</span>
+        </div>
+      )}
+
       {/* Element info */}
       <ElementInfo element={selectedElement} />
 
       {/* Scrollable content area with all sections - Lovable style */}
       <div className="panel-content">
+        {/* Content/Attributes Section - First */}
+        <AttributesTab element={selectedElement} />
+
+        {/* Divider */}
+        <div className="section-divider" />
+
         {/* Layout Section */}
         <LayoutTab element={selectedElement} />
 
@@ -107,12 +122,6 @@ export default function PropertyPanel() {
 
         {/* Effects Section */}
         <EffectsTab element={selectedElement} />
-
-        {/* Divider */}
-        <div className="section-divider" />
-
-        {/* Content/Attributes Section */}
-        <AttributesTab element={selectedElement} />
       </div>
 
       <style>{`
@@ -133,6 +142,33 @@ export default function PropertyPanel() {
           height: 1px;
           background: #f3f4f6;
           margin: 8px 16px;
+        }
+
+        .saving-indicator {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 16px;
+          background: linear-gradient(90deg, #f0f9ff 0%, #e0f2fe 100%);
+          border-bottom: 1px solid #bae6fd;
+          color: #0369a1;
+          font-size: 13px;
+          font-weight: 500;
+        }
+
+        .saving-spinner {
+          width: 14px;
+          height: 14px;
+          border: 2px solid #bae6fd;
+          border-top-color: #0284c7;
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+          to {
+            transform: rotate(360deg);
+          }
         }
       `}</style>
     </div>

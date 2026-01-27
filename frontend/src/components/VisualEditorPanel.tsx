@@ -31,12 +31,13 @@ function dedupeActions(actions: EditAction[]): EditAction[] {
 }
 
 export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps) {
-  const { refreshElementInfo, onMessage } = useIframeCommunication();
+  const { refreshElementInfo, onMessage, notifyTextSaveComplete } = useIframeCommunication();
 
   const selectedElement = useEditorStore(state => state.selectedElement);
   const history = useEditorStore(state => state.history);
   const historyIndex = useEditorStore(state => state.historyIndex);
   const clearHistory = useEditorStore(state => state.clearHistory);
+  const setSaving = useEditorStore(state => state.setSaving);
 
   const [lastSavedIndex, setLastSavedIndex] = useState(-1);
   // 追踪是否有来自属性面板的更改（非文本编辑框）
@@ -50,12 +51,19 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
     setHasPropertyChanges(false);
   }, [projectId]);
 
+  // 追踪当前是否是文本编辑保存（用于保存后通知 iframe 关闭编辑框）
+  const isTextEditSaveRef = useRef(false);
+
   // 监听 TEXT_EDIT_CONFIRMED 消息，触发自动保存
   useEffect(() => {
+    console.log('[VisualEditorPanel] Registering TEXT_EDIT_CONFIRMED handler');
     const unsubscribe = onMessage('TEXT_EDIT_CONFIRMED', () => {
       console.log('[VisualEditorPanel] TEXT_EDIT_CONFIRMED - triggering auto-save');
       // 标记这个 action 来自文本编辑
       lastActionFromTextEdit = true;
+      isTextEditSaveRef.current = true;
+      // 显示 PropertyPanel 的 loading 状态
+      setSaving(true);
       // 延迟执行保存，确保 TEXT_CHANGED 的 action 已经添加到 history
       setTimeout(() => {
         if (handleSaveRef.current) {
@@ -64,7 +72,7 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
       }, 50);
     });
     return unsubscribe;
-  }, [onMessage]);
+  }, [onMessage, setSaving]);
 
   // 监听 history 变化，判断是否来自属性面板
   useEffect(() => {
@@ -84,22 +92,40 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
   const hasChanges = pendingActions.length > 0;
 
   const handleSave = useCallback(async () => {
+    // Read fresh state from store to avoid stale closure issues
+    const storeState = useEditorStore.getState();
+    const currentHistory = storeState.history;
+    const currentHistoryIndex = storeState.historyIndex;
+    const currentSelectedElement = storeState.selectedElement;
+
+    // Calculate fresh pending actions
+    const freshPendingActions = currentHistoryIndex <= lastSavedIndex
+      ? []
+      : currentHistory.slice(lastSavedIndex + 1, currentHistoryIndex + 1);
+    const freshHasChanges = freshPendingActions.length > 0;
+
     console.log('[VisualEditorPanel] handleSave called', {
       projectId,
-      hasChanges,
-      historyIndex,
+      hasChanges: freshHasChanges,
+      historyIndex: currentHistoryIndex,
       lastSavedIndex,
-      pendingActionsCount: pendingActions.length,
-      historyLength: history.length,
+      pendingActionsCount: freshPendingActions.length,
+      historyLength: currentHistory.length,
     });
 
-    if (!projectId || !hasChanges) {
+    if (!projectId || !freshHasChanges) {
       console.log('[VisualEditorPanel] Save skipped - no projectId or no changes');
+      // Even if no changes, notify iframe to close loading state
+      if (isTextEditSaveRef.current) {
+        notifyTextSaveComplete();
+        setSaving(false);
+        isTextEditSaveRef.current = false;
+      }
       return;
     }
 
-    const filePathFallback = selectedElement?.jsxFile || 'src/App.tsx';
-    const actionsToSave = dedupeActions(pendingActions);
+    const filePathFallback = currentSelectedElement?.jsxFile || 'src/App.tsx';
+    const actionsToSave = dedupeActions(freshPendingActions);
 
     console.log('[VisualEditorPanel] Saving actions:', actionsToSave.map(a => ({
       type: a.type,
@@ -132,8 +158,8 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
             const text = String(action.newValue ?? '');
             const originalText = String(action.oldValue ?? '');
             // 优先使用 action 中存储的 tagName/className，避免 selectedElement 状态过时
-            const tagName = (action as EditAction & { tagName?: string }).tagName ?? selectedElement?.tagName;
-            const className = (action as EditAction & { className?: string }).className ?? selectedElement?.className;
+            const tagName = (action as EditAction & { tagName?: string }).tagName ?? currentSelectedElement?.tagName;
+            const className = (action as EditAction & { className?: string }).className ?? currentSelectedElement?.className;
             result = await updateComponentText(
               projectId,
               action.jsxId,
@@ -152,7 +178,7 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
             result = await updateComponentClass(projectId, action.jsxId, {
               className,
               oldClassName,  // For className-based fallback matching when position fails
-              tagName: selectedElement?.tagName,
+              tagName: currentSelectedElement?.tagName,
             }, filePath, actionPosition);
             break;
           }
@@ -198,6 +224,12 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
         toast.style.transition = 'opacity 0.3s';
         setTimeout(() => toast.remove(), 300);
       }, 4000);
+      // Reset saving state on error and notify iframe to close loading
+      if (isTextEditSaveRef.current) {
+        notifyTextSaveComplete();
+      }
+      setSaving(false);
+      isTextEditSaveRef.current = false;
       // Don't update lastSavedIndex so user can retry
       return;
     } else if (warnings.length > 0) {
@@ -229,8 +261,15 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
     setTimeout(() => {
       console.log('[VisualEditorPanel] Refreshing element info after HMR');
       refreshElementInfo();
+
+      // 如果是文本编辑保存，通知 iframe 关闭编辑框并隐藏 loading
+      if (isTextEditSaveRef.current) {
+        notifyTextSaveComplete();
+        setSaving(false);
+        isTextEditSaveRef.current = false;
+      }
     }, 800); // 等待 HMR 完成 (800ms 应该足够)
-  }, [projectId, hasChanges, pendingActions, historyIndex, selectedElement, clearHistory, refreshElementInfo]);
+  }, [projectId, lastSavedIndex, clearHistory, refreshElementInfo, notifyTextSaveComplete, setSaving]);
 
   // 更新 handleSaveRef 以便在 message handler 中调用
   useEffect(() => {

@@ -1,6 +1,7 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { ComponentNode } from '../services/api';
 import VisualEditorPanel from './VisualEditorPanel';
+import { useEditorStore } from 'visual-editor';
 
 interface LeftPanelProps {
   viewMode: 'chat' | 'design';
@@ -24,6 +25,14 @@ function LeftPanel({
 }: LeftPanelProps) {
   const [description, setDescription] = useState('');
   const [designSection, setDesignSection] = useState<DesignSection>('menu');
+  const selectedElement = useEditorStore(state => state.selectedElement);
+
+  // 当元素被选中时，自动展开属性编辑面板
+  useEffect(() => {
+    if (selectedElement && viewMode === 'design') {
+      setDesignSection('visual-edits');
+    }
+  }, [selectedElement, viewMode]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -180,33 +189,33 @@ function LeftPanel({
         ) : (
           /* Design mode - Visual edits */
           <div className="h-full">
-            {designSection === 'menu' ? (
-              /* Main menu - Visual edits */
-              <div className="p-4 space-y-3">
-                {/* Visual Edits Card */}
-                <button
-                  onClick={() => setDesignSection('visual-edits')}
-                  className="w-full p-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-left group"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-gray-200 transition-colors">
-                      <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                      </svg>
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-gray-800">Visual edits</h3>
-                      <p className="text-sm text-gray-500 mt-0.5">Select elements to edit and style visually</p>
-                    </div>
-                    <svg className="w-5 h-5 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            {/* Main menu - Visual edits */}
+            <div className={`p-4 space-y-3 ${designSection !== 'menu' ? 'hidden' : ''}`}>
+              {/* Visual Edits Card */}
+              <button
+                onClick={() => setDesignSection('visual-edits')}
+                className="w-full p-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-gray-200 transition-colors">
+                    <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                     </svg>
                   </div>
-                </button>
-              </div>
-            ) : (
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-gray-800">Visual edits</h3>
+                    <p className="text-sm text-gray-500 mt-0.5">Select elements to edit and style visually</p>
+                  </div>
+                  <svg className="w-5 h-5 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </button>
+            </div>
+            {/* VisualEditorPanel 始终渲染以确保 message handler 注册 */}
+            <div className={designSection !== 'visual-edits' ? 'hidden' : 'h-full'}>
               <VisualEditorPanel projectId={projectId} />
-            )}
+            </div>
           </div>
         )}
       </div>

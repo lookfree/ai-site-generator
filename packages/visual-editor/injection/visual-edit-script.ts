@@ -105,37 +105,150 @@ class VisualEditController {
     document.body.appendChild(this.hoverOverlay);
   }
 
+  // 文本编辑容器元素
+  private textEditContainer: HTMLElement | null = null;
+  private textSubmitBtn: HTMLElement | null = null;
+  private textLoadingIndicator: HTMLElement | null = null;
+  private isSaving = false;
+  private isClickingSubmit = false; // Flag to track submit button clicks
+
   private createTextEditBox(): void {
-    this.textEditBox = document.createElement('input');
-    this.textEditBox.id = '__visual_edit_text_box__';
-    this.textEditBox.type = 'text';
-    this.textEditBox.style.cssText = `
+    // 创建容器
+    this.textEditContainer = document.createElement('div');
+    this.textEditContainer.id = '__visual_edit_text_container__';
+    this.textEditContainer.style.cssText = `
       position: fixed;
       z-index: 1000001;
       display: none;
-      min-width: 200px;
-      max-width: 400px;
-      padding: 8px 12px;
-      font-size: 14px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: #fff;
-      background: #1e293b;
-      border: 2px solid #3b82f6;
-      border-radius: 6px;
-      outline: none;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      min-width: 250px;
+      max-width: 450px;
+      background: #faf8f5;
+      border: 1px solid #e5e0d8;
+      border-radius: 24px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+      overflow: hidden;
     `;
 
-    // 输入事件 - 同步到元素
-    this.textEditBox.addEventListener('input', this.handleTextBoxInput);
+    // 创建输入框
+    this.textEditBox = document.createElement('input');
+    this.textEditBox.id = '__visual_edit_text_box__';
+    this.textEditBox.type = 'text';
+    this.textEditBox.placeholder = 'Enter new text...';
+    this.textEditBox.style.cssText = `
+      flex: 1;
+      border: none;
+      outline: none;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #333;
+      background: transparent;
+      min-width: 0;
+    `;
+
+    // 创建提交按钮
+    this.textSubmitBtn = document.createElement('button');
+    this.textSubmitBtn.id = '__visual_edit_submit_btn__';
+    this.textSubmitBtn.innerHTML = `
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="19" x2="12" y2="5"></line>
+        <polyline points="5 12 12 5 19 12"></polyline>
+      </svg>
+    `;
+    this.textSubmitBtn.style.cssText = `
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: none;
+      background: #1a1a1a;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-right: 6px;
+      flex-shrink: 0;
+      transition: opacity 0.2s;
+    `;
+
+    // 创建 loading 指示器
+    this.textLoadingIndicator = document.createElement('div');
+    this.textLoadingIndicator.id = '__visual_edit_loading__';
+    this.textLoadingIndicator.style.cssText = `
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #faf8f5;
+      border-radius: 24px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px 16px;
+    `;
+    this.textLoadingIndicator.innerHTML = `
+      <span style="
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        border: 2px solid #999;
+        border-top-color: transparent;
+        animation: __ve_spin 0.8s linear infinite;
+      "></span>
+      <span style="color: #666; font-size: 14px;">Updating...</span>
+    `;
+
+    // 添加动画样式
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes __ve_spin {
+        to { transform: rotate(360deg); }
+      }
+    `;
+    document.head.appendChild(style);
+
+    // 创建输入行容器
+    const inputRow = document.createElement('div');
+    inputRow.style.cssText = `
+      display: flex;
+      align-items: center;
+    `;
+    inputRow.appendChild(this.textEditBox);
+    inputRow.appendChild(this.textSubmitBtn);
+
+    this.textEditContainer.appendChild(inputRow);
+    this.textEditContainer.appendChild(this.textLoadingIndicator);
 
     // 键盘事件 - Enter 确认, Escape 取消
     this.textEditBox.addEventListener('keydown', this.handleTextBoxKeydown);
 
-    // 失焦事件 - 确认编辑
+    // 提交按钮点击事件
+    this.textSubmitBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.confirmTextEdit();
+    });
+
+    // 阻止容器内的点击事件冒泡（避免触发 blur 关闭）
+    this.textEditContainer.addEventListener('mousedown', (e) => {
+      if (e.target === this.textSubmitBtn || this.textSubmitBtn?.contains(e.target as Node)) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.isClickingSubmit = true;
+        // Reset flag after a short delay
+        setTimeout(() => {
+          this.isClickingSubmit = false;
+        }, 300);
+      }
+    });
+
+    // 失焦事件 - 取消编辑（不自动提交）
     this.textEditBox.addEventListener('blur', this.handleTextBoxBlur);
 
-    document.body.appendChild(this.textEditBox);
+    document.body.appendChild(this.textEditContainer);
   }
 
   private createResizeHandles(): void {
@@ -394,7 +507,28 @@ class VisualEditController {
 
     // 点击 - 选中元素
     document.addEventListener('click', (e) => {
+      console.log('[visual-edit-script] click event', {
+        isEditMode: this.isEditMode,
+        target: (e.target as HTMLElement).tagName,
+        targetId: (e.target as HTMLElement).id,
+      });
+
       if (!this.isEditMode) return;
+
+      // 检查是否点击在文本编辑容器内（包括提交按钮）
+      const clickTarget = e.target as HTMLElement;
+      if (this.textEditContainer && this.textEditContainer.contains(clickTarget)) {
+        console.log('[visual-edit-script] click inside text edit container');
+        // 如果点击的是提交按钮或其子元素，手动触发确认
+        if (this.textSubmitBtn && (clickTarget === this.textSubmitBtn || this.textSubmitBtn.contains(clickTarget))) {
+          console.log('[visual-edit-script] click on submit button, calling confirmTextEdit');
+          e.preventDefault();
+          e.stopPropagation();
+          this.confirmTextEdit();
+        }
+        // 不阻止其他容器内的事件（如输入框）
+        return;
+      }
 
       e.preventDefault();
       e.stopPropagation();
@@ -477,6 +611,13 @@ class VisualEditController {
         case 'REFRESH_ELEMENT_INFO':
           // Re-extract element info from current DOM (positions may have changed after HMR)
           this.refreshSelectedElementInfo();
+          break;
+
+        case 'TEXT_SAVE_COMPLETE':
+          // 保存完成，关闭编辑框
+          console.log('[visual-edit-script] TEXT_SAVE_COMPLETE received');
+          this.hideSavingState();
+          this.exitTextEditMode();
           break;
       }
     });
@@ -769,28 +910,35 @@ class VisualEditController {
   private originalTextBeforeEdit: string = '';
 
   private enterTextEditMode(): void {
-    if (!this.selectedElement || !this.textEditBox) return;
+    if (!this.selectedElement || !this.textEditBox || !this.textEditContainer) return;
 
     // 记录进入编辑模式时的原始文本
     this.originalTextBeforeEdit = this.getDirectTextContent(this.selectedElement);
     this.isTextEditing = true;
+    this.isSaving = false;
 
-    // 获取元素位置，将输入框定位在元素下方
+    // 获取元素位置，将容器定位在元素下方
     const rect = this.selectedElement.getBoundingClientRect();
 
-    // 设置输入框位置
-    this.textEditBox.style.left = `${rect.left}px`;
-    this.textEditBox.style.top = `${rect.bottom + 8}px`;
-    this.textEditBox.style.minWidth = `${Math.max(200, rect.width)}px`;
+    // 设置容器位置
+    this.textEditContainer.style.left = `${rect.left}px`;
+    this.textEditContainer.style.top = `${rect.bottom + 8}px`;
+    this.textEditContainer.style.minWidth = `${Math.max(250, rect.width)}px`;
 
     // 如果超出屏幕底部，改为显示在元素上方
-    if (rect.bottom + 50 > window.innerHeight) {
-      this.textEditBox.style.top = `${rect.top - 44}px`;
+    if (rect.bottom + 60 > window.innerHeight) {
+      this.textEditContainer.style.top = `${rect.top - 52}px`;
     }
 
     // 设置输入框内容并显示
     this.textEditBox.value = this.originalTextBeforeEdit;
-    this.textEditBox.style.display = 'block';
+    this.textEditContainer.style.display = 'block';
+
+    // 隐藏 loading，显示输入区
+    if (this.textLoadingIndicator) {
+      this.textLoadingIndicator.style.display = 'none';
+    }
+
     this.textEditBox.focus();
     this.textEditBox.select();
 
@@ -799,95 +947,101 @@ class VisualEditController {
   }
 
   private exitTextEditMode(): void {
-    if (!this.textEditBox) return;
+    if (!this.textEditContainer) return;
 
     this.isTextEditing = false;
-    this.textEditBox.style.display = 'none';
+    this.isSaving = false;
+    this.textEditContainer.style.display = 'none';
     this.highlightOverlay!.style.borderColor = '#3b82f6';
   }
 
-  // 文本框输入事件 - 实时同步到元素和 frontend
-  private handleTextBoxInput = (): void => {
-    if (!this.selectedElement || !this.textEditBox) return;
+  // 显示保存中状态
+  private showSavingState(): void {
+    if (!this.textLoadingIndicator) return;
+    this.isSaving = true;
+    this.textLoadingIndicator.style.display = 'flex';
+  }
 
-    const text = this.textEditBox.value;
+  // 隐藏保存中状态
+  private hideSavingState(): void {
+    if (!this.textLoadingIndicator) return;
+    this.isSaving = false;
+    this.textLoadingIndicator.style.display = 'none';
+  }
 
-    // 实时更新元素显示
-    this.updateElementText(this.selectedElement, text);
-
-    // 发送消息到 frontend
-    this.postMessage('TEXT_CHANGED', {
-      jsxId: this.selectedElement.getAttribute('data-jsx-id'),
-      text,
-      originalText: this.originalTextBeforeEdit,
-      tagName: this.selectedElement.tagName.toLowerCase(),
-      className: this.selectedElement.className,
-      jsxFile: this.selectedElement.getAttribute('data-jsx-file') || undefined,
-      jsxLine: this.selectedElement.getAttribute('data-jsx-line') ? Number(this.selectedElement.getAttribute('data-jsx-line')) : undefined,
-      jsxCol: this.selectedElement.getAttribute('data-jsx-col') ? Number(this.selectedElement.getAttribute('data-jsx-col')) : undefined,
-    });
-  };
-
-  // 文本框键盘事件 - Enter 确认, Escape 取消
+  // 文本框键盘事件 - Escape 取消（Enter 不提交，只有点击箭头才提交）
   private handleTextBoxKeydown = (e: KeyboardEvent): void => {
-    if (e.key === 'Enter') {
+    if (this.isSaving) {
       e.preventDefault();
-      this.confirmTextEdit();
-    } else if (e.key === 'Escape') {
+      return;
+    }
+    if (e.key === 'Escape') {
       e.preventDefault();
-      // 恢复原始文本
-      if (this.selectedElement) {
-        this.updateElementText(this.selectedElement, this.originalTextBeforeEdit);
-        this.postMessage('TEXT_CHANGED', {
-          jsxId: this.selectedElement.getAttribute('data-jsx-id'),
-          text: this.originalTextBeforeEdit,
-          originalText: this.originalTextBeforeEdit,
-          tagName: this.selectedElement.tagName.toLowerCase(),
-          className: this.selectedElement.className,
-          jsxFile: this.selectedElement.getAttribute('data-jsx-file') || undefined,
-          jsxLine: this.selectedElement.getAttribute('data-jsx-line') ? Number(this.selectedElement.getAttribute('data-jsx-line')) : undefined,
-          jsxCol: this.selectedElement.getAttribute('data-jsx-col') ? Number(this.selectedElement.getAttribute('data-jsx-col')) : undefined,
-        });
-      }
       this.exitTextEditMode();
     }
   };
 
-  // 文本框失焦事件 - 确认编辑并自动保存
+  // 文本框失焦事件 - 仅取消编辑（不自动提交）
   private handleTextBoxBlur = (): void => {
-    // 使用 setTimeout 避免点击其他元素时立即关闭
+    // 使用 setTimeout 避免点击提交按钮时立即关闭
     setTimeout(() => {
-      if (this.isTextEditing) {
-        this.confirmTextEdit();
+      // Don't close if user is clicking submit button or saving
+      if (this.isTextEditing && !this.isSaving && !this.isClickingSubmit) {
+        // 不自动提交，仅关闭（用户需点击提交按钮或按 Enter）
+        this.exitTextEditMode();
       }
-    }, 100);
+    }, 200);
   };
 
   // 确认文本编辑并发送保存信号
   private confirmTextEdit(): void {
-    if (!this.selectedElement || !this.textEditBox) {
-      this.exitTextEditMode();
+    console.log('[visual-edit-script] confirmTextEdit called', {
+      hasSelectedElement: !!this.selectedElement,
+      hasTextEditBox: !!this.textEditBox,
+      isSaving: this.isSaving,
+      isTextEditing: this.isTextEditing,
+    });
+
+    if (!this.selectedElement || !this.textEditBox || this.isSaving) {
+      console.log('[visual-edit-script] confirmTextEdit early return');
       return;
     }
 
     const currentText = this.textEditBox.value;
     const originalText = this.originalTextBeforeEdit;
 
-    // 如果文本有变化，发送确认消息触发自动保存
-    if (currentText !== originalText) {
-      this.postMessage('TEXT_EDIT_CONFIRMED', {
-        jsxId: this.selectedElement.getAttribute('data-jsx-id'),
-        text: currentText,
-        originalText: originalText,
-        tagName: this.selectedElement.tagName.toLowerCase(),
-        className: this.selectedElement.className,
-        jsxFile: this.selectedElement.getAttribute('data-jsx-file') || undefined,
-        jsxLine: this.selectedElement.getAttribute('data-jsx-line') ? Number(this.selectedElement.getAttribute('data-jsx-line')) : undefined,
-        jsxCol: this.selectedElement.getAttribute('data-jsx-col') ? Number(this.selectedElement.getAttribute('data-jsx-col')) : undefined,
-      });
+    console.log('[visual-edit-script] confirmTextEdit values', {
+      currentText,
+      originalText,
+      areEqual: currentText === originalText,
+    });
+
+    // 如果文本没有变化，直接关闭
+    if (currentText === originalText) {
+      console.log('[visual-edit-script] Text unchanged, closing');
+      this.exitTextEditMode();
+      return;
     }
 
-    this.exitTextEditMode();
+    // 显示保存状态
+    console.log('[visual-edit-script] Showing saving state and sending TEXT_EDIT_CONFIRMED');
+    this.showSavingState();
+
+    // 更新元素显示（提交时才更新，不实时联动）
+    this.updateElementText(this.selectedElement, currentText);
+
+    // 发送确认消息触发自动保存
+    this.postMessage('TEXT_EDIT_CONFIRMED', {
+      jsxId: this.selectedElement.getAttribute('data-jsx-id'),
+      text: currentText,
+      originalText: originalText,
+      tagName: this.selectedElement.tagName.toLowerCase(),
+      className: this.selectedElement.className,
+      jsxFile: this.selectedElement.getAttribute('data-jsx-file') || undefined,
+      jsxLine: this.selectedElement.getAttribute('data-jsx-line') ? Number(this.selectedElement.getAttribute('data-jsx-line')) : undefined,
+      jsxCol: this.selectedElement.getAttribute('data-jsx-col') ? Number(this.selectedElement.getAttribute('data-jsx-col')) : undefined,
+    });
+    // 保存完成后会收到 TEXT_SAVE_COMPLETE 消息，然后关闭编辑框
   }
 
   // ========== 模式控制 ==========
@@ -939,7 +1093,13 @@ ${clone.innerHTML}
   // ========== 通信 ==========
 
   private postMessage(type: string, payload: unknown): void {
-    window.parent.postMessage({ type, payload }, '*');
+    console.log(`[visual-edit-script] postMessage: type=${type}`, payload);
+    try {
+      window.parent.postMessage({ type, payload }, '*');
+      console.log(`[visual-edit-script] postMessage sent successfully`);
+    } catch (error) {
+      console.error(`[visual-edit-script] postMessage error:`, error);
+    }
   }
 }
 

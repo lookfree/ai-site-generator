@@ -11,6 +11,10 @@ interface EditorState {
   enableEditMode: () => void;
   disableEditMode: () => void;
 
+  // 保存状态 (用于显示 loading 提示)
+  isSaving: boolean;
+  setSaving: (saving: boolean) => void;
+
   // 选中元素
   selectedElement: SelectedElementInfo | null;
   setSelectedElement: (element: SelectedElementInfo | null) => void;
@@ -48,6 +52,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   isEditMode: false,
   enableEditMode: () => set({ isEditMode: true }),
   disableEditMode: () => set({ isEditMode: false, selectedElement: null }),
+
+  // 保存状态
+  isSaving: false,
+  setSaving: (saving) => set({ isSaving: saving }),
 
   // 选中元素
   selectedElement: null,

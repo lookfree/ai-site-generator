@@ -2,7 +2,7 @@
  * iframe 通信 Hook
  */
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useEditorStore } from '../stores/editor-store';
 import type { SelectedElementInfo, MessageType, EditorMessage, EditAction } from '../types';
 
@@ -10,6 +10,30 @@ interface UseIframeCommunicationOptions {
   /** iframe 来源 */
   origin?: string;
 }
+
+// 使用 window 对象存储全局消息处理器，确保跨 HMR 持久化
+const GLOBAL_HANDLERS_KEY = '__visual_editor_message_handlers__';
+const GLOBAL_LISTENER_KEY = '__visual_editor_listener_initialized__';
+declare global {
+  interface Window {
+    [GLOBAL_HANDLERS_KEY]?: Map<string, (payload: unknown) => void>;
+    [GLOBAL_LISTENER_KEY]?: boolean;
+  }
+}
+
+// 获取或创建全局消息处理器 Map
+function getGlobalMessageHandlers(): Map<string, (payload: unknown) => void> {
+  if (!window[GLOBAL_HANDLERS_KEY]) {
+    window[GLOBAL_HANDLERS_KEY] = new Map();
+  }
+  return window[GLOBAL_HANDLERS_KEY];
+}
+
+// 存储内置消息处理函数的引用，用于全局 listener
+let builtInHandlers: {
+  setSelectedElement: (element: SelectedElementInfo | null) => void;
+  addAction: (action: EditAction) => void;
+} | null = null;
 
 /**
  * iframe 通信 Hook
@@ -21,8 +45,6 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
   const enableEditMode = useEditorStore(state => state.enableEditMode);
   const disableEditMode = useEditorStore(state => state.disableEditMode);
   const addAction = useEditorStore(state => state.addAction);
-
-  const messageHandlersRef = useRef<Map<string, (payload: unknown) => void>>(new Map());
 
   /**
    * 向 iframe 发送消息
@@ -41,9 +63,15 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
    * 注册消息处理器
    */
   const onMessage = useCallback((type: string, handler: (payload: unknown) => void) => {
-    messageHandlersRef.current.set(type, handler);
+    console.log(`[useIframeCommunication] onMessage called: registering handler for ${type}`);
+    // 直接使用 window 上的 Map，确保始终访问同一个实例
+    const handlers = getGlobalMessageHandlers();
+    handlers.set(type, handler);
+    console.log(`[useIframeCommunication] Handler registered, total handlers: ${handlers.size}, types: [${Array.from(handlers.keys()).join(',')}]`);
     return () => {
-      messageHandlersRef.current.delete(type);
+      const handlers = getGlobalMessageHandlers();
+      handlers.delete(type);
+      console.log(`[useIframeCommunication] Handler unregistered for ${type}`);
     };
   }, []);
 
@@ -103,30 +131,55 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
     postMessage('REFRESH_ELEMENT_INFO');
   }, [postMessage]);
 
-  // 监听来自 iframe 的消息
+  /**
+   * 通知文本保存完成 (用于关闭文本编辑框)
+   */
+  const notifyTextSaveComplete = useCallback(() => {
+    postMessage('TEXT_SAVE_COMPLETE');
+  }, [postMessage]);
+
+  // 更新内置处理函数引用（用于全局 listener）
   useEffect(() => {
+    builtInHandlers = { setSelectedElement, addAction };
+  }, [setSelectedElement, addAction]);
+
+  // 初始化全局消息监听器（只执行一次）
+  useEffect(() => {
+    if (window[GLOBAL_LISTENER_KEY]) {
+      return; // 已经初始化过，跳过
+    }
+    window[GLOBAL_LISTENER_KEY] = true;
+
     const handleMessage = (event: MessageEvent) => {
       const { type, payload } = event.data || {};
+
+      if (!type) return;
+
+      // Debug: log incoming messages (只打印一次)
+      console.log(`[useIframeCommunication] Received message: type=${type}`);
+
+      // 获取最新的内置处理函数
+      const handlers = builtInHandlers;
+      if (!handlers) return;
+
+      const { setSelectedElement: setElement, addAction: addAct } = handlers;
 
       // 处理内置消息
       switch (type) {
         case 'ELEMENT_SELECTED':
-          setSelectedElement(payload as SelectedElementInfo);
+          setElement(payload as SelectedElementInfo);
           break;
 
         case 'ELEMENT_DESELECTED':
-          setSelectedElement(null);
+          setElement(null);
           break;
 
         case 'ELEMENT_UPDATED': {
-          // 元素属性更新后，只更新 computedStyles（需要从 iframe 获取）
-          // className 由本地乐观更新处理，不需要从 iframe 同步
           const currentElement = useEditorStore.getState().selectedElement;
           const updatedInfo = payload as SelectedElementInfo;
           if (currentElement && currentElement.jsxId === updatedInfo.jsxId) {
-            setSelectedElement({
+            setElement({
               ...currentElement,
-              // 更新计算样式（这些只能从 iframe 获取）
               computedStyles: updatedInfo.computedStyles,
               boundingRect: updatedInfo.boundingRect,
             });
@@ -135,9 +188,6 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
         }
 
         case 'TEXT_CHANGED': {
-          // 文本编辑框实时输入时，只更新 selectedElement 的 textContent（用于实时预览）
-          // 不添加到 history，避免每次按键都创建 action
-          // 最终保存由 TEXT_EDIT_CONFIRMED 处理
           const {
             jsxId,
             text,
@@ -158,12 +208,10 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
           };
           const currentElement = useEditorStore.getState().selectedElement;
 
-          // 只更新 selectedElement 的 textContent，不添加到 history
           if (currentElement && currentElement.jsxId === jsxId) {
-            setSelectedElement({
+            setElement({
               ...currentElement,
               textContent: text,
-              // 如果 iframe 提供了新的元信息，也更新
               ...(tagName && { tagName }),
               ...(className && { className }),
               ...(jsxFile && { jsxFile }),
@@ -175,25 +223,20 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
         }
 
         case 'ELEMENT_INFO_REFRESHED': {
-          // HMR 后刷新元素信息，更新位置信息以避免后续编辑应用到错误元素
           const refreshedInfo = payload as SelectedElementInfo | null;
           const currentElement = useEditorStore.getState().selectedElement;
           console.log('[useIframeCommunication] ELEMENT_INFO_REFRESHED:', {
             hasRefreshedInfo: !!refreshedInfo,
             oldLine: currentElement?.jsxLine,
             newLine: refreshedInfo?.jsxLine,
-            oldCol: currentElement?.jsxCol,
-            newCol: refreshedInfo?.jsxCol,
           });
 
           if (refreshedInfo && currentElement && currentElement.jsxId === refreshedInfo.jsxId) {
-            // 更新 selectedElement 的位置信息
-            setSelectedElement({
+            setElement({
               ...currentElement,
               jsxFile: refreshedInfo.jsxFile,
               jsxLine: refreshedInfo.jsxLine,
               jsxCol: refreshedInfo.jsxCol,
-              // Also update other info that might have changed
               className: refreshedInfo.className,
               textContent: refreshedInfo.textContent,
               computedStyles: refreshedInfo.computedStyles,
@@ -204,7 +247,6 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
         }
 
         case 'TEXT_EDIT_CONFIRMED': {
-          // 文本编辑确认 - 添加 action 到 history，然后 handler 会触发保存
           const {
             jsxId,
             text,
@@ -232,7 +274,6 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
           });
 
           if (jsxId && text !== originalText) {
-            // 创建 action 并添加到 history
             const filePath = jsxFile ?? currentElement?.jsxFile;
             const line = jsxLine ?? currentElement?.jsxLine;
             const col = jsxCol ?? currentElement?.jsxCol;
@@ -250,24 +291,26 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
               tagName: tagName ?? currentElement?.tagName,
               className: className ?? currentElement?.className,
             };
-            addAction(action);
+            addAct(action);
           }
           break;
         }
       }
 
       // 调用自定义处理器
-      const handler = messageHandlersRef.current.get(type);
+      const customHandlers = getGlobalMessageHandlers();
+      const handler = customHandlers.get(type);
+      const registeredTypes = Array.from(customHandlers.keys());
+      console.log(`[useIframeCommunication] Looking for handler: type=${type}, hasHandler=${!!handler}, registered=[${registeredTypes.join(',')}]`);
       if (handler) {
+        console.log(`[useIframeCommunication] Calling custom handler for: ${type}`);
         handler(payload);
       }
     };
 
     window.addEventListener('message', handleMessage);
-    return () => {
-      window.removeEventListener('message', handleMessage);
-    };
-  }, [setSelectedElement, addAction]);
+    // 注意：不 cleanup，因为这是全局唯一的 listener
+  }, []);
 
   return {
     postMessage,
@@ -279,5 +322,6 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
     highlightElement,
     getFullHtml,
     refreshElementInfo,
+    notifyTextSaveComplete,
   };
 }

@@ -13,55 +13,33 @@ var VisualEditController = class {
     this.resizeHandle = null;
     this.dragStartPos = { x: 0, y: 0 };
     this.originalRect = null;
+    // 文本编辑容器元素
+    this.textEditContainer = null;
+    this.textSubmitBtn = null;
+    this.textLoadingIndicator = null;
+    this.isSaving = false;
+    this.isClickingSubmit = false;
     // ========== 文本编辑模式 ==========
     // 存储进入编辑模式时的原始文本
     this.originalTextBeforeEdit = "";
-    // 文本框输入事件 - 实时同步到元素和 frontend
-    this.handleTextBoxInput = () => {
-      if (!this.selectedElement || !this.textEditBox) return;
-      const text = this.textEditBox.value;
-      this.updateElementText(this.selectedElement, text);
-      this.postMessage("TEXT_CHANGED", {
-        jsxId: this.selectedElement.getAttribute("data-jsx-id"),
-        text,
-        originalText: this.originalTextBeforeEdit,
-        tagName: this.selectedElement.tagName.toLowerCase(),
-        className: this.selectedElement.className,
-        jsxFile: this.selectedElement.getAttribute("data-jsx-file") || void 0,
-        jsxLine: this.selectedElement.getAttribute("data-jsx-line") ? Number(this.selectedElement.getAttribute("data-jsx-line")) : void 0,
-        jsxCol: this.selectedElement.getAttribute("data-jsx-col") ? Number(this.selectedElement.getAttribute("data-jsx-col")) : void 0
-      });
-    };
-    // 文本框键盘事件 - Enter 确认, Escape 取消
+    // 文本框键盘事件 - Escape 取消（Enter 不提交，只有点击箭头才提交）
     this.handleTextBoxKeydown = (e) => {
-      if (e.key === "Enter") {
+      if (this.isSaving) {
         e.preventDefault();
-        this.confirmTextEdit();
-      } else if (e.key === "Escape") {
+        return;
+      }
+      if (e.key === "Escape") {
         e.preventDefault();
-        if (this.selectedElement) {
-          this.updateElementText(this.selectedElement, this.originalTextBeforeEdit);
-          this.postMessage("TEXT_CHANGED", {
-            jsxId: this.selectedElement.getAttribute("data-jsx-id"),
-            text: this.originalTextBeforeEdit,
-            originalText: this.originalTextBeforeEdit,
-            tagName: this.selectedElement.tagName.toLowerCase(),
-            className: this.selectedElement.className,
-            jsxFile: this.selectedElement.getAttribute("data-jsx-file") || void 0,
-            jsxLine: this.selectedElement.getAttribute("data-jsx-line") ? Number(this.selectedElement.getAttribute("data-jsx-line")) : void 0,
-            jsxCol: this.selectedElement.getAttribute("data-jsx-col") ? Number(this.selectedElement.getAttribute("data-jsx-col")) : void 0
-          });
-        }
         this.exitTextEditMode();
       }
     };
-    // 文本框失焦事件 - 确认编辑并自动保存
+    // 文本框失焦事件 - 仅取消编辑（不自动提交）
     this.handleTextBoxBlur = () => {
       setTimeout(() => {
-        if (this.isTextEditing) {
-          this.confirmTextEdit();
+        if (this.isTextEditing && !this.isSaving && !this.isClickingSubmit) {
+          this.exitTextEditMode();
         }
-      }, 100);
+      }, 200);
     };
     this.init();
   }
@@ -100,30 +78,122 @@ var VisualEditController = class {
     document.body.appendChild(this.highlightOverlay);
     document.body.appendChild(this.hoverOverlay);
   }
+  // Flag to track submit button clicks
   createTextEditBox() {
-    this.textEditBox = document.createElement("input");
-    this.textEditBox.id = "__visual_edit_text_box__";
-    this.textEditBox.type = "text";
-    this.textEditBox.style.cssText = `
+    this.textEditContainer = document.createElement("div");
+    this.textEditContainer.id = "__visual_edit_text_container__";
+    this.textEditContainer.style.cssText = `
       position: fixed;
       z-index: 1000001;
       display: none;
-      min-width: 200px;
-      max-width: 400px;
-      padding: 8px 12px;
+      min-width: 250px;
+      max-width: 450px;
+      background: #faf8f5;
+      border: 1px solid #e5e0d8;
+      border-radius: 24px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+      overflow: hidden;
+    `;
+    this.textEditBox = document.createElement("input");
+    this.textEditBox.id = "__visual_edit_text_box__";
+    this.textEditBox.type = "text";
+    this.textEditBox.placeholder = "Enter new text...";
+    this.textEditBox.style.cssText = `
+      flex: 1;
+      border: none;
+      outline: none;
+      padding: 12px 16px;
       font-size: 14px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: #fff;
-      background: #1e293b;
-      border: 2px solid #3b82f6;
-      border-radius: 6px;
-      outline: none;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      color: #333;
+      background: transparent;
+      min-width: 0;
     `;
-    this.textEditBox.addEventListener("input", this.handleTextBoxInput);
+    this.textSubmitBtn = document.createElement("button");
+    this.textSubmitBtn.id = "__visual_edit_submit_btn__";
+    this.textSubmitBtn.innerHTML = `
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="19" x2="12" y2="5"></line>
+        <polyline points="5 12 12 5 19 12"></polyline>
+      </svg>
+    `;
+    this.textSubmitBtn.style.cssText = `
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: none;
+      background: #1a1a1a;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-right: 6px;
+      flex-shrink: 0;
+      transition: opacity 0.2s;
+    `;
+    this.textLoadingIndicator = document.createElement("div");
+    this.textLoadingIndicator.id = "__visual_edit_loading__";
+    this.textLoadingIndicator.style.cssText = `
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #faf8f5;
+      border-radius: 24px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px 16px;
+    `;
+    this.textLoadingIndicator.innerHTML = `
+      <span style="
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        border: 2px solid #999;
+        border-top-color: transparent;
+        animation: __ve_spin 0.8s linear infinite;
+      "></span>
+      <span style="color: #666; font-size: 14px;">Updating...</span>
+    `;
+    const style = document.createElement("style");
+    style.textContent = `
+      @keyframes __ve_spin {
+        to { transform: rotate(360deg); }
+      }
+    `;
+    document.head.appendChild(style);
+    const inputRow = document.createElement("div");
+    inputRow.style.cssText = `
+      display: flex;
+      align-items: center;
+    `;
+    inputRow.appendChild(this.textEditBox);
+    inputRow.appendChild(this.textSubmitBtn);
+    this.textEditContainer.appendChild(inputRow);
+    this.textEditContainer.appendChild(this.textLoadingIndicator);
     this.textEditBox.addEventListener("keydown", this.handleTextBoxKeydown);
+    this.textSubmitBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.confirmTextEdit();
+    });
+    this.textEditContainer.addEventListener("mousedown", (e) => {
+      if (e.target === this.textSubmitBtn || this.textSubmitBtn?.contains(e.target)) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.isClickingSubmit = true;
+        setTimeout(() => {
+          this.isClickingSubmit = false;
+        }, 300);
+      }
+    });
     this.textEditBox.addEventListener("blur", this.handleTextBoxBlur);
-    document.body.appendChild(this.textEditBox);
+    document.body.appendChild(this.textEditContainer);
   }
   createResizeHandles() {
     const handles = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
@@ -339,7 +409,23 @@ var VisualEditController = class {
       }
     });
     document.addEventListener("click", (e) => {
+      console.log("[visual-edit-script] click event", {
+        isEditMode: this.isEditMode,
+        target: e.target.tagName,
+        targetId: e.target.id
+      });
       if (!this.isEditMode) return;
+      const clickTarget = e.target;
+      if (this.textEditContainer && this.textEditContainer.contains(clickTarget)) {
+        console.log("[visual-edit-script] click inside text edit container");
+        if (this.textSubmitBtn && (clickTarget === this.textSubmitBtn || this.textSubmitBtn.contains(clickTarget))) {
+          console.log("[visual-edit-script] click on submit button, calling confirmTextEdit");
+          e.preventDefault();
+          e.stopPropagation();
+          this.confirmTextEdit();
+        }
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       const target = this.findEditableElement(e.target);
@@ -400,6 +486,11 @@ var VisualEditController = class {
           break;
         case "REFRESH_ELEMENT_INFO":
           this.refreshSelectedElementInfo();
+          break;
+        case "TEXT_SAVE_COMPLETE":
+          console.log("[visual-edit-script] TEXT_SAVE_COMPLETE received");
+          this.hideSavingState();
+          this.exitTextEditMode();
           break;
       }
     });
@@ -651,49 +742,82 @@ var VisualEditController = class {
     }
   }
   enterTextEditMode() {
-    if (!this.selectedElement || !this.textEditBox) return;
+    if (!this.selectedElement || !this.textEditBox || !this.textEditContainer) return;
     this.originalTextBeforeEdit = this.getDirectTextContent(this.selectedElement);
     this.isTextEditing = true;
+    this.isSaving = false;
     const rect = this.selectedElement.getBoundingClientRect();
-    this.textEditBox.style.left = `${rect.left}px`;
-    this.textEditBox.style.top = `${rect.bottom + 8}px`;
-    this.textEditBox.style.minWidth = `${Math.max(200, rect.width)}px`;
-    if (rect.bottom + 50 > window.innerHeight) {
-      this.textEditBox.style.top = `${rect.top - 44}px`;
+    this.textEditContainer.style.left = `${rect.left}px`;
+    this.textEditContainer.style.top = `${rect.bottom + 8}px`;
+    this.textEditContainer.style.minWidth = `${Math.max(250, rect.width)}px`;
+    if (rect.bottom + 60 > window.innerHeight) {
+      this.textEditContainer.style.top = `${rect.top - 52}px`;
     }
     this.textEditBox.value = this.originalTextBeforeEdit;
-    this.textEditBox.style.display = "block";
+    this.textEditContainer.style.display = "block";
+    if (this.textLoadingIndicator) {
+      this.textLoadingIndicator.style.display = "none";
+    }
     this.textEditBox.focus();
     this.textEditBox.select();
     this.highlightOverlay.style.borderColor = "#8b5cf6";
   }
   exitTextEditMode() {
-    if (!this.textEditBox) return;
+    if (!this.textEditContainer) return;
     this.isTextEditing = false;
-    this.textEditBox.style.display = "none";
+    this.isSaving = false;
+    this.textEditContainer.style.display = "none";
     this.highlightOverlay.style.borderColor = "#3b82f6";
+  }
+  // 显示保存中状态
+  showSavingState() {
+    if (!this.textLoadingIndicator) return;
+    this.isSaving = true;
+    this.textLoadingIndicator.style.display = "flex";
+  }
+  // 隐藏保存中状态
+  hideSavingState() {
+    if (!this.textLoadingIndicator) return;
+    this.isSaving = false;
+    this.textLoadingIndicator.style.display = "none";
   }
   // 确认文本编辑并发送保存信号
   confirmTextEdit() {
-    if (!this.selectedElement || !this.textEditBox) {
-      this.exitTextEditMode();
+    console.log("[visual-edit-script] confirmTextEdit called", {
+      hasSelectedElement: !!this.selectedElement,
+      hasTextEditBox: !!this.textEditBox,
+      isSaving: this.isSaving,
+      isTextEditing: this.isTextEditing
+    });
+    if (!this.selectedElement || !this.textEditBox || this.isSaving) {
+      console.log("[visual-edit-script] confirmTextEdit early return");
       return;
     }
     const currentText = this.textEditBox.value;
     const originalText = this.originalTextBeforeEdit;
-    if (currentText !== originalText) {
-      this.postMessage("TEXT_EDIT_CONFIRMED", {
-        jsxId: this.selectedElement.getAttribute("data-jsx-id"),
-        text: currentText,
-        originalText,
-        tagName: this.selectedElement.tagName.toLowerCase(),
-        className: this.selectedElement.className,
-        jsxFile: this.selectedElement.getAttribute("data-jsx-file") || void 0,
-        jsxLine: this.selectedElement.getAttribute("data-jsx-line") ? Number(this.selectedElement.getAttribute("data-jsx-line")) : void 0,
-        jsxCol: this.selectedElement.getAttribute("data-jsx-col") ? Number(this.selectedElement.getAttribute("data-jsx-col")) : void 0
-      });
+    console.log("[visual-edit-script] confirmTextEdit values", {
+      currentText,
+      originalText,
+      areEqual: currentText === originalText
+    });
+    if (currentText === originalText) {
+      console.log("[visual-edit-script] Text unchanged, closing");
+      this.exitTextEditMode();
+      return;
     }
-    this.exitTextEditMode();
+    console.log("[visual-edit-script] Showing saving state and sending TEXT_EDIT_CONFIRMED");
+    this.showSavingState();
+    this.updateElementText(this.selectedElement, currentText);
+    this.postMessage("TEXT_EDIT_CONFIRMED", {
+      jsxId: this.selectedElement.getAttribute("data-jsx-id"),
+      text: currentText,
+      originalText,
+      tagName: this.selectedElement.tagName.toLowerCase(),
+      className: this.selectedElement.className,
+      jsxFile: this.selectedElement.getAttribute("data-jsx-file") || void 0,
+      jsxLine: this.selectedElement.getAttribute("data-jsx-line") ? Number(this.selectedElement.getAttribute("data-jsx-line")) : void 0,
+      jsxCol: this.selectedElement.getAttribute("data-jsx-col") ? Number(this.selectedElement.getAttribute("data-jsx-col")) : void 0
+    });
   }
   // ========== 模式控制 ==========
   enableEditMode() {
@@ -730,7 +854,13 @@ ${clone.innerHTML}
   }
   // ========== 通信 ==========
   postMessage(type, payload) {
-    window.parent.postMessage({ type, payload }, "*");
+    console.log(`[visual-edit-script] postMessage: type=${type}`, payload);
+    try {
+      window.parent.postMessage({ type, payload }, "*");
+      console.log(`[visual-edit-script] postMessage sent successfully`);
+    } catch (error) {
+      console.error(`[visual-edit-script] postMessage error:`, error);
+    }
   }
 };
 if (typeof window !== "undefined") {
