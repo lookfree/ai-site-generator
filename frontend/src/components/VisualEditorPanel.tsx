@@ -33,6 +33,7 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
   const selectedElement = useEditorStore(state => state.selectedElement);
   const history = useEditorStore(state => state.history);
   const historyIndex = useEditorStore(state => state.historyIndex);
+  const clearHistory = useEditorStore(state => state.clearHistory);
 
   const [lastSavedIndex, setLastSavedIndex] = useState(-1);
 
@@ -176,12 +177,14 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
       }, 2000);
     }
 
-    // Only update lastSavedIndex when no errors
-    setLastSavedIndex(historyIndex);
+    // Clear history after successful save so new edits create fresh actions
+    // This fixes the issue where editing the same element after save wouldn't show "Unsaved changes"
+    clearHistory();
+    setLastSavedIndex(-1);
 
     // HMR will automatically update the preview when fly-server receives the file update
     // No need to manually reload iframe - this would cause white screen
-  }, [projectId, hasChanges, pendingActions, historyIndex, selectedElement]);
+  }, [projectId, hasChanges, pendingActions, historyIndex, selectedElement, clearHistory]);
 
   return (
     <div className="h-full flex flex-col">

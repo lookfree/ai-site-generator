@@ -19,6 +19,7 @@ interface EditorState {
   history: EditAction[];
   historyIndex: number;
   addAction: (action: EditAction) => void;
+  clearHistory: () => void;
   undo: () => EditAction | null;
   redo: () => EditAction | null;
   canUndo: () => boolean;
@@ -89,6 +90,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       history: newHistory,
       historyIndex: newHistory.length - 1,
     });
+  },
+
+  clearHistory: () => {
+    set({ history: [], historyIndex: -1 });
   },
 
   undo: () => {
