@@ -28,7 +28,7 @@ function dedupeActions(actions: EditAction[]): EditAction[] {
 }
 
 export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps) {
-  useIframeCommunication();
+  const { refreshElementInfo } = useIframeCommunication();
 
   const selectedElement = useEditorStore(state => state.selectedElement);
   const history = useEditorStore(state => state.history);
@@ -96,14 +96,17 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
           case 'text': {
             const text = String(action.newValue ?? '');
             const originalText = String(action.oldValue ?? '');
+            // 优先使用 action 中存储的 tagName/className，避免 selectedElement 状态过时
+            const tagName = (action as EditAction & { tagName?: string }).tagName ?? selectedElement?.tagName;
+            const className = (action as EditAction & { className?: string }).className ?? selectedElement?.className;
             result = await updateComponentText(
               projectId,
               action.jsxId,
               text,
               filePath,
               originalText,  // 传递原始文本用于文本匹配回退
-              selectedElement?.tagName,
-              selectedElement?.className,
+              tagName,
+              className,
               actionPosition
             );
             break;
@@ -184,7 +187,14 @@ export default function VisualEditorPanel({ projectId }: VisualEditorPanelProps)
 
     // HMR will automatically update the preview when fly-server receives the file update
     // No need to manually reload iframe - this would cause white screen
-  }, [projectId, hasChanges, pendingActions, historyIndex, selectedElement, clearHistory]);
+
+    // 保存后，等待 HMR 完成，然后刷新元素位置信息
+    // 这样后续编辑操作会使用最新的行号/列号，避免应用到错误的元素
+    setTimeout(() => {
+      console.log('[VisualEditorPanel] Refreshing element info after HMR');
+      refreshElementInfo();
+    }, 800); // 等待 HMR 完成 (800ms 应该足够)
+  }, [projectId, hasChanges, pendingActions, historyIndex, selectedElement, clearHistory, refreshElementInfo]);
 
   return (
     <div className="h-full flex flex-col">

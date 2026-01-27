@@ -140,9 +140,15 @@ bun run typecheck
 ## 部署
 
 ```bash
-# 部署到 Fly.io
-fly deploy --remote-only
+# 1. 如果修改了 packages/visual-editor，先构建并复制注入脚本
+cd ../packages/visual-editor && bun run build
+cp dist/injection/visual-edit-script.js ../fly-server/static/injection/
+
+# 2. 部署到 Fly.io
+cd ../fly-server && fly deploy
 ```
+
+**重要**: 修改 `packages/visual-editor/injection/visual-edit-script.ts` 后，必须手动复制到 `fly-server/static/injection/` 再部署。
 
 ## 架构说明
 

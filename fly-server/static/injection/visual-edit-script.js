@@ -11,12 +11,23 @@ var VisualEditController = class {
     this.resizeHandle = null;
     this.dragStartPos = { x: 0, y: 0 };
     this.originalRect = null;
+    // ========== 文本编辑模式 ==========
+    // 存储进入编辑模式时的原始文本
+    this.originalTextBeforeEdit = "";
     this.handleTextInput = () => {
       if (!this.selectedElement) return;
       const text = this.getDirectTextContent(this.selectedElement);
       this.postMessage("TEXT_CHANGED", {
         jsxId: this.selectedElement.getAttribute("data-jsx-id"),
-        text
+        text,
+        // 发送原始文本（进入编辑模式时的值），用于准确的代码替换
+        originalText: this.originalTextBeforeEdit,
+        // 发送元素元数据，避免 frontend 状态过时导致的问题
+        tagName: this.selectedElement.tagName.toLowerCase(),
+        className: this.selectedElement.className,
+        jsxFile: this.selectedElement.getAttribute("data-jsx-file") || void 0,
+        jsxLine: this.selectedElement.getAttribute("data-jsx-line") ? Number(this.selectedElement.getAttribute("data-jsx-line")) : void 0,
+        jsxCol: this.selectedElement.getAttribute("data-jsx-col") ? Number(this.selectedElement.getAttribute("data-jsx-col")) : void 0
       });
     };
     this.handleTextBlur = () => {
@@ -331,6 +342,9 @@ var VisualEditController = class {
         case "HIGHLIGHT_ELEMENT":
           this.highlightByJsxId(payload.jsxId);
           break;
+        case "REFRESH_ELEMENT_INFO":
+          this.refreshSelectedElementInfo();
+          break;
       }
     });
   }
@@ -381,6 +395,18 @@ var VisualEditController = class {
         }
       }, 1e3);
     }
+  }
+  /**
+   * Re-extract and send element info from current DOM
+   * Called after HMR to get fresh position info (data-jsx-line/col may have changed)
+   */
+  refreshSelectedElementInfo() {
+    if (!this.selectedElement) {
+      this.postMessage("ELEMENT_INFO_REFRESHED", null);
+      return;
+    }
+    const info = this.extractElementInfo(this.selectedElement);
+    this.postMessage("ELEMENT_INFO_REFRESHED", info);
   }
   // ========== 信息提取 ==========
   extractElementInfo(element) {
@@ -544,6 +570,10 @@ var VisualEditController = class {
       (cls) => cls.startsWith("__jsx_")
     );
     element.className = [...jsxClasses, ...className.split(" ")].join(" ");
+    if (element === this.selectedElement) {
+      const info = this.extractElementInfo(element);
+      this.postMessage("ELEMENT_UPDATED", info);
+    }
   }
   updateElementStyle(element, styles) {
     for (const [prop, value] of Object.entries(styles)) {
@@ -551,6 +581,10 @@ var VisualEditController = class {
         prop.replace(/([A-Z])/g, "-$1").toLowerCase(),
         value
       );
+    }
+    if (element === this.selectedElement) {
+      const info = this.extractElementInfo(element);
+      this.postMessage("ELEMENT_UPDATED", info);
     }
   }
   updateElementAttribute(element, attr) {
@@ -560,9 +594,9 @@ var VisualEditController = class {
       element.setAttribute(attr.name, attr.value);
     }
   }
-  // ========== 文本编辑模式 ==========
   enterTextEditMode() {
     if (!this.selectedElement) return;
+    this.originalTextBeforeEdit = this.getDirectTextContent(this.selectedElement);
     this.selectedElement.contentEditable = "true";
     this.selectedElement.focus();
     const range = document.createRange();

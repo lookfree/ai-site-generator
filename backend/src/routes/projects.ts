@@ -10,6 +10,8 @@ import {
   getProjectPreviewUrl,
   startPreview,
   getProjectStatus as getFlyProjectStatus,
+  listProjectFiles,
+  getProjectFile,
 } from '../services/flyio';
 import * as path from 'path';
 
@@ -117,8 +119,30 @@ router.post('/generate', async (req: Request, res: Response) => {
             projectName,
             description,
           });
-          const fileCount = scaffoldResult?.files?.length ?? 0;
-          console.log(`[API] Scaffold created: ${fileCount} files`);
+          const scaffoldFilePaths = scaffoldResult?.files ?? [];
+          console.log(`[API] Scaffold created: ${scaffoldFilePaths.length} files`);
+
+          // 从 fly-server 获取脚手架文件内容并保存到数据库
+          if (scaffoldFilePaths.length > 0) {
+            let savedCount = 0;
+            for (const fileInfo of scaffoldFilePaths) {
+              try {
+                const fileData = await getProjectFile(projectId, fileInfo.path);
+                if (fileData && fileData.content) {
+                  await query(
+                    `INSERT INTO project_files (project_id, file_path, content)
+                     VALUES ($1, $2, $3)
+                     ON CONFLICT (project_id, file_path) DO UPDATE SET content = $3, updated_at = NOW()`,
+                    [projectId, fileInfo.path, fileData.content]
+                  );
+                  savedCount++;
+                }
+              } catch (fileErr) {
+                console.warn(`[API] Failed to fetch scaffold file ${fileInfo.path}:`, fileErr);
+              }
+            }
+            console.log(`[API] Scaffold files saved to database: ${savedCount}/${scaffoldFilePaths.length} files`);
+          }
         } catch (scaffoldError) {
           console.warn('[API] Scaffold creation failed, continuing with code generation:', scaffoldError);
           // 脚手架创建失败不阻止代码生成

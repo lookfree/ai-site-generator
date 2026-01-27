@@ -12,29 +12,6 @@ const getPreviewUrl = getProxyPreviewUrl;
 
 type ViewMode = 'chat' | 'design';
 
-interface Theme {
-  id: string;
-  name: string;
-  colors: {
-    primary: string;
-    primaryText: string;
-    secondary: string;
-    secondaryText: string;
-    accent: string;
-    accentText: string;
-  };
-  typography: {
-    sansSerif: string;
-    serif: string;
-    mono: string;
-  };
-  effects: {
-    borderRadius: string;
-    shadowColor: string;
-    shadowOpacity: number;
-  };
-}
-
 function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('chat');
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
@@ -158,25 +135,6 @@ function App() {
     // TODO: 同步到属性面板
   }, []);
 
-  // 处理应用主题
-  const handleApplyTheme = useCallback((theme: Theme) => {
-    console.log('Apply theme:', theme);
-
-    // 发送主题到 iframe
-    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
-    if (iframe?.contentWindow) {
-      iframe.contentWindow.postMessage({
-        type: 'APPLY_THEME',
-        theme: {
-          colors: theme.colors,
-          typography: theme.typography,
-          effects: theme.effects
-        }
-      }, '*');
-    }
-  }, []);
-
-
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       {/* 顶部导航 */}
@@ -199,7 +157,6 @@ function App() {
           onGenerate={handleGenerate}
           projectId={currentProject?.id}
           onSelectComponent={handleSelectComponent}
-          onApplyTheme={handleApplyTheme}
         />
 
         {/* 右侧预览区 */}

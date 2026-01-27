@@ -164,7 +164,7 @@ async function injectScripts(response: Response, projectId: string): Promise<Res
   let html = await response.text();
   const baseHref = `/p/${projectId}/`;
 
-  // 注入内容：base 标签 + visual-edit-script
+  // 注入内容：base 标签 + visual-edit-script（主题监听已集成在 visual-edit-script 中）
   const injectedContent = `
     <base href="${baseHref}">
     <script type="module" src="/static/visual-edit-script.js"></script>`;

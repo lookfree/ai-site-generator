@@ -70,6 +70,10 @@ export interface EditAction {
   jsxLine?: number;
   /** 源码列号 (用于精确 AST 定位) */
   jsxCol?: number;
+  /** 标签名 (用于 text 类型的 fallback 匹配) */
+  tagName?: string;
+  /** className (用于 fallback 匹配) */
+  className?: string;
 }
 
 /**
@@ -87,7 +91,9 @@ export type MessageType =
   | 'TEXT_CHANGED'
   | 'EDIT_MODE_ENABLED'
   | 'EDIT_MODE_DISABLED'
-  | 'FULL_HTML';
+  | 'FULL_HTML'
+  | 'REFRESH_ELEMENT_INFO'
+  | 'ELEMENT_INFO_REFRESHED';
 
 /**
  * 通信消息

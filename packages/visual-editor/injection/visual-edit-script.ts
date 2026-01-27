@@ -437,6 +437,11 @@ class VisualEditController {
         case 'HIGHLIGHT_ELEMENT':
           this.highlightByJsxId((payload as { jsxId: string }).jsxId);
           break;
+
+        case 'REFRESH_ELEMENT_INFO':
+          // Re-extract element info from current DOM (positions may have changed after HMR)
+          this.refreshSelectedElementInfo();
+          break;
       }
     });
   }
@@ -502,6 +507,21 @@ class VisualEditController {
         }
       }, 1000);
     }
+  }
+
+  /**
+   * Re-extract and send element info from current DOM
+   * Called after HMR to get fresh position info (data-jsx-line/col may have changed)
+   */
+  private refreshSelectedElementInfo(): void {
+    if (!this.selectedElement) {
+      this.postMessage('ELEMENT_INFO_REFRESHED', null);
+      return;
+    }
+
+    // Re-extract info from the current DOM element (positions may have changed after HMR)
+    const info = this.extractElementInfo(this.selectedElement);
+    this.postMessage('ELEMENT_INFO_REFRESHED', info);
   }
 
   // ========== 信息提取 ==========
@@ -709,8 +729,14 @@ class VisualEditController {
 
   // ========== 文本编辑模式 ==========
 
+  // 存储进入编辑模式时的原始文本
+  private originalTextBeforeEdit: string = '';
+
   private enterTextEditMode(): void {
     if (!this.selectedElement) return;
+
+    // 记录进入编辑模式时的原始文本，用于后续的 TEXT_CHANGED 消息
+    this.originalTextBeforeEdit = this.getDirectTextContent(this.selectedElement);
 
     this.selectedElement.contentEditable = 'true';
     this.selectedElement.focus();
@@ -744,9 +770,18 @@ class VisualEditController {
     if (!this.selectedElement) return;
 
     const text = this.getDirectTextContent(this.selectedElement);
+    // 发送完整的元素信息，避免 frontend 依赖可能过时的 selectedElement 状态
     this.postMessage('TEXT_CHANGED', {
       jsxId: this.selectedElement.getAttribute('data-jsx-id'),
       text,
+      // 发送原始文本（进入编辑模式时的值），用于准确的代码替换
+      originalText: this.originalTextBeforeEdit,
+      // 发送元素元数据，避免 frontend 状态过时导致的问题
+      tagName: this.selectedElement.tagName.toLowerCase(),
+      className: this.selectedElement.className,
+      jsxFile: this.selectedElement.getAttribute('data-jsx-file') || undefined,
+      jsxLine: this.selectedElement.getAttribute('data-jsx-line') ? Number(this.selectedElement.getAttribute('data-jsx-line')) : undefined,
+      jsxCol: this.selectedElement.getAttribute('data-jsx-col') ? Number(this.selectedElement.getAttribute('data-jsx-col')) : undefined,
     });
   };
 

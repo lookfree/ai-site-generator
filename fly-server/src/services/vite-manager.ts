@@ -252,8 +252,7 @@ export class ViteDevServerManager extends EventEmitter {
       // 2. 添加或更新 server 配置 (包括 allowedHosts 和 hmr)
       // HMR 配置让 Vite client 直接连接到 fly-server，绕过 backend proxy
       // 注意：path 使用完整路径，Vite 会直接使用这个路径（不会与 base 叠加）
-      const hmrConfig = `
-    hmr: {
+      const hmrConfig = `hmr: {
       protocol: '${isHttps ? 'wss' : 'ws'}',
       host: '${flyPublicHost}',
       clientPort: ${isHttps ? 443 : 3000},
@@ -272,17 +271,18 @@ export class ViteDevServerManager extends EventEmitter {
         }
         // 更新或添加 hmr 配置
         if (content.includes('hmr:')) {
-          // 替换现有的 hmr 配置
+          // 替换现有的 hmr 配置 (使用更健壮的正则，匹配嵌套大括号)
+          // 匹配 hmr: { ... } 包括多行和嵌套对象
           content = content.replace(
-            /hmr:\s*\{[^}]*\},?/,
-            hmrConfig
+            /hmr:\s*\{[\s\S]*?overlay:\s*true,?\s*\},?[\s\n]*/,
+            hmrConfig + '\n    '
           );
           modified = true;
         } else {
-          // 在 server 配置中添加 hmr
+          // 在 allowedHosts 后添加 hmr
           content = content.replace(
-            /server:\s*\{/,
-            `server: {${hmrConfig}`
+            /(allowedHosts:\s*['"][^'"]*['"],?)\s*/,
+            `$1\n    ${hmrConfig}\n    `
           );
           modified = true;
         }
@@ -290,7 +290,7 @@ export class ViteDevServerManager extends EventEmitter {
         // 添加完整的 server 配置
         content = content.replace(
           /defineConfig\(\{/,
-          `defineConfig({\n  server: {\n    allowedHosts: 'all',${hmrConfig}\n  },`
+          `defineConfig({\n  server: {\n    allowedHosts: 'all',\n    ${hmrConfig}\n  },`
         );
         modified = true;
       }

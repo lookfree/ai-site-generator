@@ -96,6 +96,13 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
     postMessage('GET_FULL_HTML');
   }, [postMessage]);
 
+  /**
+   * 刷新元素信息 (用于 HMR 后获取最新的位置信息)
+   */
+  const refreshElementInfo = useCallback(() => {
+    postMessage('REFRESH_ELEMENT_INFO');
+  }, [postMessage]);
+
   // 监听来自 iframe 的消息
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -129,34 +136,109 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
 
         case 'TEXT_CHANGED': {
           // 用户在 iframe 中内联编辑文字时，记录到历史
-          const { jsxId, text } = payload as { jsxId: string; text: string };
+          // 使用 iframe 发送的完整信息，避免依赖可能过时的 selectedElement
+          const {
+            jsxId,
+            text,
+            originalText,
+            tagName,
+            className,
+            jsxFile,
+            jsxLine,
+            jsxCol,
+          } = payload as {
+            jsxId: string;
+            text: string;
+            originalText?: string;
+            tagName?: string;
+            className?: string;
+            jsxFile?: string;
+            jsxLine?: number;
+            jsxCol?: number;
+          };
           const currentElement = useEditorStore.getState().selectedElement;
-          console.log('[useIframeCommunication] TEXT_CHANGED received:', { jsxId, text, hasCurrentElement: !!currentElement });
-          if (jsxId && currentElement) {
+          console.log('[useIframeCommunication] TEXT_CHANGED received:', {
+            jsxId,
+            text,
+            originalText,
+            tagName,
+            hasCurrentElement: !!currentElement,
+          });
+
+          if (jsxId) {
+            // 优先使用 iframe 发送的原始文本，回退到 selectedElement
+            const oldValue = originalText !== undefined ? originalText : currentElement?.textContent;
+            // 优先使用 iframe 发送的位置信息
+            const filePath = jsxFile ?? currentElement?.jsxFile;
+            const line = jsxLine ?? currentElement?.jsxLine;
+            const col = jsxCol ?? currentElement?.jsxCol;
+
             console.log('[useIframeCommunication] Creating text action:', {
               jsxId,
-              oldValue: currentElement.textContent,
+              oldValue,
               newValue: text,
-              filePath: currentElement.jsxFile,
-              jsxLine: currentElement.jsxLine,
-              jsxCol: currentElement.jsxCol,
+              filePath,
+              jsxLine: line,
+              jsxCol: col,
             });
+
             const action: EditAction = {
               id: `text-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
               timestamp: Date.now(),
               jsxId,
               type: 'text',
-              oldValue: currentElement.textContent,
+              oldValue: oldValue,
               newValue: text,
-              filePath: currentElement.jsxFile,
-              jsxLine: currentElement.jsxLine,
-              jsxCol: currentElement.jsxCol,
+              filePath: filePath,
+              jsxLine: line,
+              jsxCol: col,
+              // 存储 tagName 和 className 供保存时使用
+              tagName: tagName ?? currentElement?.tagName,
+              className: className ?? currentElement?.className,
             };
             addAction(action);
-            // 同步更新 selectedElement 的 textContent
+
+            // 同步更新 selectedElement 的 textContent 和其他信息
+            if (currentElement) {
+              setSelectedElement({
+                ...currentElement,
+                textContent: text,
+                // 如果 iframe 提供了新的元信息，也更新
+                ...(tagName && { tagName }),
+                ...(className && { className }),
+                ...(jsxFile && { jsxFile }),
+                ...(jsxLine && { jsxLine }),
+                ...(jsxCol && { jsxCol }),
+              });
+            }
+          }
+          break;
+        }
+
+        case 'ELEMENT_INFO_REFRESHED': {
+          // HMR 后刷新元素信息，更新位置信息以避免后续编辑应用到错误元素
+          const refreshedInfo = payload as SelectedElementInfo | null;
+          const currentElement = useEditorStore.getState().selectedElement;
+          console.log('[useIframeCommunication] ELEMENT_INFO_REFRESHED:', {
+            hasRefreshedInfo: !!refreshedInfo,
+            oldLine: currentElement?.jsxLine,
+            newLine: refreshedInfo?.jsxLine,
+            oldCol: currentElement?.jsxCol,
+            newCol: refreshedInfo?.jsxCol,
+          });
+
+          if (refreshedInfo && currentElement && currentElement.jsxId === refreshedInfo.jsxId) {
+            // 更新 selectedElement 的位置信息
             setSelectedElement({
               ...currentElement,
-              textContent: text,
+              jsxFile: refreshedInfo.jsxFile,
+              jsxLine: refreshedInfo.jsxLine,
+              jsxCol: refreshedInfo.jsxCol,
+              // Also update other info that might have changed
+              className: refreshedInfo.className,
+              textContent: refreshedInfo.textContent,
+              computedStyles: refreshedInfo.computedStyles,
+              boundingRect: refreshedInfo.boundingRect,
             });
           }
           break;
@@ -185,5 +267,6 @@ export function useIframeCommunication(options: UseIframeCommunicationOptions = 
     selectByJsxId,
     highlightElement,
     getFullHtml,
+    refreshElementInfo,
   };
 }

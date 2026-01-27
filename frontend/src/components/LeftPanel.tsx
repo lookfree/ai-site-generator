@@ -1,30 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { ComponentNode } from '../services/api';
-import ThemePanel from './ThemePanel';
 import VisualEditorPanel from './VisualEditorPanel';
-
-interface Theme {
-  id: string;
-  name: string;
-  colors: {
-    primary: string;
-    primaryText: string;
-    secondary: string;
-    secondaryText: string;
-    accent: string;
-    accentText: string;
-  };
-  typography: {
-    sansSerif: string;
-    serif: string;
-    mono: string;
-  };
-  effects: {
-    borderRadius: string;
-    shadowColor: string;
-    shadowOpacity: number;
-  };
-}
 
 interface LeftPanelProps {
   viewMode: 'chat' | 'design';
@@ -34,10 +10,9 @@ interface LeftPanelProps {
   onGenerate: (description: string) => void;
   projectId?: string;
   onSelectComponent?: (component: ComponentNode) => void;
-  onApplyTheme?: (theme: Theme) => void;
 }
 
-type DesignSection = 'menu' | 'themes' | 'visual-edits';
+type DesignSection = 'menu' | 'visual-edits';
 
 function LeftPanel({
   viewMode,
@@ -46,7 +21,6 @@ function LeftPanel({
   generationPercent,
   onGenerate,
   projectId,
-  onApplyTheme,
 }: LeftPanelProps) {
   const [description, setDescription] = useState('');
   const [designSection, setDesignSection] = useState<DesignSection>('menu');
@@ -78,14 +52,8 @@ function LeftPanel({
               </svg>
             </button>
             <div>
-              <h2 className="font-semibold text-gray-800">
-                {designSection === 'themes' ? 'Themes' : 'Visual Edits'}
-              </h2>
-              <p className="text-sm text-gray-500">
-                {designSection === 'themes'
-                  ? 'Browse and apply themes'
-                  : 'Select elements to edit'}
-              </p>
+              <h2 className="font-semibold text-gray-800">Visual Edits</h2>
+              <p className="text-sm text-gray-500">Select elements to edit</p>
             </div>
           </div>
         ) : (
@@ -210,32 +178,11 @@ function LeftPanel({
             )}
           </div>
         ) : (
-          /* Design mode - Lovable style menu */
+          /* Design mode - Visual edits */
           <div className="h-full">
             {designSection === 'menu' ? (
-              /* Main menu - Themes and Visual edits */
+              /* Main menu - Visual edits */
               <div className="p-4 space-y-3">
-                {/* Themes Card */}
-                <button
-                  onClick={() => setDesignSection('themes')}
-                  className="w-full p-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-left group"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-gray-200 transition-colors">
-                      <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
-                      </svg>
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-gray-800">Themes</h3>
-                      <p className="text-sm text-gray-500 mt-0.5">Browse and apply themes to your project</p>
-                    </div>
-                    <svg className="w-5 h-5 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </div>
-                </button>
-
                 {/* Visual Edits Card */}
                 <button
                   onClick={() => setDesignSection('visual-edits')}
@@ -257,9 +204,6 @@ function LeftPanel({
                   </div>
                 </button>
               </div>
-            ) : designSection === 'themes' ? (
-              /* Themes Panel */
-              <ThemePanel projectId={projectId} onApplyTheme={onApplyTheme} />
             ) : (
               <VisualEditorPanel projectId={projectId} />
             )}
