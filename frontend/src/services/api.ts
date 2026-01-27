@@ -212,13 +212,24 @@ export async function updateComponentClass(
     className?: string;
     addClasses?: string[];
     removeClasses?: string[];
+    oldClassName?: string;  // For className-based fallback matching
+    tagName?: string;       // Additional context for matching
   },
-  filePath = 'src/App.tsx'
+  filePath = 'src/App.tsx',
+  position?: PositionInfo
 ): Promise<EditResult> {
   const response = await fetch(`${API_BASE}/code-editor/${projectId}/update-class`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ componentId, ...options, file: filePath }),
+    body: JSON.stringify({
+      componentId,
+      ...options,
+      file: filePath,
+      // Position info for accurate AST matching
+      jsxFile: position?.jsxFile,
+      jsxLine: position?.jsxLine,
+      jsxCol: position?.jsxCol,
+    }),
   });
   if (!response.ok) throw new Error('Failed to update class');
   return response.json();
@@ -283,12 +294,20 @@ export async function updateComponentStyle(
   projectId: string,
   componentId: string,
   style: Record<string, string>,
-  filePath = 'src/App.tsx'
+  filePath = 'src/App.tsx',
+  position?: PositionInfo
 ): Promise<EditResult> {
   const response = await fetch(`${API_BASE}/code-editor/${projectId}/update-style`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ componentId, style, file: filePath }),
+    body: JSON.stringify({
+      componentId,
+      style,
+      file: filePath,
+      jsxFile: position?.jsxFile,
+      jsxLine: position?.jsxLine,
+      jsxCol: position?.jsxCol,
+    }),
   });
   if (!response.ok) throw new Error('Failed to update style');
   return response.json();

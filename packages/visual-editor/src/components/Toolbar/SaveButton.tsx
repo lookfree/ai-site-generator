@@ -1,5 +1,5 @@
 /**
- * 保存按钮
+ * Save Button
  */
 
 import { useState } from 'react';
@@ -31,14 +31,14 @@ export default function SaveButton({ onSave }: SaveButtonProps) {
       {isSaving ? (
         <>
           <span className="spinner" />
-          保存中...
+          Saving...
         </>
       ) : (
         <>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <path d="M2 2h9.586L14 4.414V14H2V2zm1 1v10h10V5h-3V2H3zm8 0v2h2.586L11 2z"/>
           </svg>
-          保存
+          Save
         </>
       )}
 

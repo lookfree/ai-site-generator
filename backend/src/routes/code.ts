@@ -5,9 +5,8 @@
 
 import { Router, Request, Response } from 'express';
 import { query, queryOne } from '../db/postgres';
-import { astEditor, editCode, batchEditCode, findNodes, findNodeById } from '../services/ast';
+import { astProcessor } from '../services/ast/adapter';
 import { updateProjectFile } from '../services/flyio';
-import type { AstEditRequest } from '../services/ast';
 
 const router = Router();
 
@@ -61,7 +60,7 @@ router.get('/:projectId/*/nodes', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'File not found' });
     }
 
-    const nodes = findNodes(file.content, filePath);
+    const nodes = astProcessor.findAllNodes(file.content, filePath);
 
     res.json({
       projectId,
@@ -102,7 +101,7 @@ router.post('/:projectId/edit', async (req: Request, res: Response) => {
     }
 
     // 执行 AST 编辑
-    const result = await editCode(file.content, filePath, { jsxId, operation });
+    const result = await astProcessor.transform(file.content, filePath, { jsxId, operation });
 
     if (!result.success) {
       return res.status(400).json({
@@ -140,7 +139,7 @@ router.post('/:projectId/edit', async (req: Request, res: Response) => {
 /**
  * 批量编辑多个元素
  * POST /api/code/:projectId/batch-edit
- * Body: { filePath: string, edits: AstEditRequest[] }
+ * Body: { filePath: string, edits: TransformRequest[] }
  */
 router.post('/:projectId/batch-edit', async (req: Request, res: Response) => {
   try {
@@ -164,7 +163,7 @@ router.post('/:projectId/batch-edit', async (req: Request, res: Response) => {
     }
 
     // 执行批量 AST 编辑
-    const result = await batchEditCode(file.content, filePath, edits);
+    const result = await astProcessor.batchTransform(file.content, filePath, edits);
 
     if (!result.success) {
       return res.status(400).json({
@@ -224,7 +223,7 @@ router.get('/:projectId/node/:jsxId', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'File not found' });
     }
 
-    const node = findNodeById(file.content, filePath, jsxId);
+    const node = astProcessor.findNodeById(file.content, filePath, jsxId);
 
     if (!node) {
       return res.status(404).json({ error: 'Node not found' });
@@ -272,7 +271,7 @@ router.post('/:projectId/style', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'File not found' });
     }
 
-    const result = await editCode(file.content, filePath, { jsxId, operation });
+    const result = await astProcessor.transform(file.content, filePath, { jsxId, operation });
 
     if (!result.success) {
       return res.status(400).json({
@@ -336,7 +335,7 @@ router.post('/:projectId/text', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'File not found' });
     }
 
-    const result = await editCode(file.content, filePath, { jsxId, operation });
+    const result = await astProcessor.transform(file.content, filePath, { jsxId, operation });
 
     if (!result.success) {
       return res.status(400).json({

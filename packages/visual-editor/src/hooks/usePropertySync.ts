@@ -62,7 +62,7 @@ export function usePropertySync(jsxId: string) {
 
     const newClassName = newClasses.join(' ');
 
-    // 记录历史
+    // 记录历史 (携带位置信息用于精确 AST 定位)
     const action: EditAction = {
       id: `action-${Date.now()}`,
       timestamp: Date.now(),
@@ -71,6 +71,8 @@ export function usePropertySync(jsxId: string) {
       oldValue: selectedElement.className,
       newValue: newClassName,
       filePath: selectedElement.jsxFile,
+      jsxLine: selectedElement.jsxLine,
+      jsxCol: selectedElement.jsxCol,
     };
     addAction(action);
 
@@ -97,7 +99,7 @@ export function usePropertySync(jsxId: string) {
       return;
     }
 
-    // 记录历史
+    // 记录历史 (携带位置信息用于精确 AST 定位)
     const action: EditAction = {
       id: `action-${Date.now()}`,
       timestamp: Date.now(),
@@ -106,6 +108,8 @@ export function usePropertySync(jsxId: string) {
       oldValue: selectedElement.textContent,
       newValue: text,
       filePath: selectedElement.jsxFile,
+      jsxLine: selectedElement.jsxLine,
+      jsxCol: selectedElement.jsxCol,
     };
     addAction(action);
 
@@ -121,7 +125,7 @@ export function usePropertySync(jsxId: string) {
       return;
     }
 
-    // 记录历史
+    // 记录历史 (携带位置信息用于精确 AST 定位)
     const action: EditAction = {
       id: `action-${Date.now()}`,
       timestamp: Date.now(),
@@ -130,6 +134,8 @@ export function usePropertySync(jsxId: string) {
       oldValue: { name, value: selectedElement.attributes[name] ?? null },
       newValue: { name, value },
       filePath: selectedElement.jsxFile,
+      jsxLine: selectedElement.jsxLine,
+      jsxCol: selectedElement.jsxCol,
     };
     addAction(action);
 

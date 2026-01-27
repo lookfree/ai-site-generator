@@ -61,7 +61,24 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     // 截断撤销后的历史
     const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(action);
+
+    // Check if there's an existing action for the same jsxId:type
+    // If so, update its newValue instead of creating a duplicate
+    // This preserves the original oldValue while tracking the latest change
+    const existingIndex = newHistory.findIndex(
+      (a) => a.jsxId === action.jsxId && a.type === action.type
+    );
+
+    if (existingIndex >= 0) {
+      // Update existing action's newValue, keep original oldValue
+      newHistory[existingIndex] = {
+        ...newHistory[existingIndex],
+        newValue: action.newValue,
+        timestamp: action.timestamp,
+      };
+    } else {
+      newHistory.push(action);
+    }
 
     // 限制历史长度
     if (newHistory.length > MAX_HISTORY) {

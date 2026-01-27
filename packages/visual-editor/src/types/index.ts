@@ -8,6 +8,12 @@
 export interface SelectedElementInfo {
   /** JSX ID */
   jsxId: string;
+  /** 源文件路径 (data-jsx-file) */
+  jsxFile?: string;
+  /** 源码行号 (data-jsx-line) */
+  jsxLine?: number;
+  /** 源码列号 (data-jsx-col) */
+  jsxCol?: number;
   /** 标签名 */
   tagName: string;
   /** className */
@@ -22,6 +28,10 @@ export interface SelectedElementInfo {
   attributes: Record<string, string>;
   /** DOM 路径 (JSX ID 数组) */
   path: string[];
+  /** 相同 jsxId 元素中的索引（处理 .map() 生成元素） */
+  elementIndex?: number;
+  /** 相同 jsxId 元素数量 */
+  elementCount?: number;
 }
 
 /**
@@ -34,6 +44,8 @@ export interface UpdatePayload {
   type: 'text' | 'className' | 'style' | 'attribute';
   /** 更新值 */
   value: unknown;
+  /** 相同 jsxId 元素中的索引（处理 .map() 生成元素） */
+  elementIndex?: number;
 }
 
 /**
@@ -54,6 +66,10 @@ export interface EditAction {
   newValue: unknown;
   /** 文件路径 */
   filePath?: string;
+  /** 源码行号 (用于精确 AST 定位) */
+  jsxLine?: number;
+  /** 源码列号 (用于精确 AST 定位) */
+  jsxCol?: number;
 }
 
 /**
@@ -111,21 +127,21 @@ export interface DeviceViewConfig {
 }
 
 /**
- * 设备视图预设
+ * Device view presets
  */
 export const DEVICE_VIEWS: Record<DeviceView, DeviceViewConfig> = {
-  desktop: { name: '桌面', width: 1280, icon: '🖥️' },
-  tablet: { name: '平板', width: 768, icon: '📱' },
-  mobile: { name: '手机', width: 375, icon: '📲' },
+  desktop: { name: 'Desktop', width: 1280, icon: '🖥️' },
+  tablet: { name: 'Tablet', width: 768, icon: '📱' },
+  mobile: { name: 'Mobile', width: 375, icon: '📲' },
 };
 
 /**
- * 属性面板标签页 ID
+ * Property panel tab ID
  */
 export type PropertyTabId = 'style' | 'layout' | 'spacing' | 'effects' | 'attributes';
 
 /**
- * 标签页配置
+ * Tab configuration
  */
 export interface TabConfig {
   id: PropertyTabId;
@@ -134,12 +150,12 @@ export interface TabConfig {
 }
 
 /**
- * 属性面板标签页配置
+ * Property panel tabs configuration
  */
 export const PROPERTY_TABS: TabConfig[] = [
-  { id: 'style', label: '样式', icon: '🎨' },
-  { id: 'layout', label: '布局', icon: '📐' },
-  { id: 'spacing', label: '间距', icon: '↔️' },
-  { id: 'effects', label: '效果', icon: '✨' },
-  { id: 'attributes', label: '属性', icon: '⚙️' },
+  { id: 'style', label: 'Style', icon: '🎨' },
+  { id: 'layout', label: 'Layout', icon: '📐' },
+  { id: 'spacing', label: 'Spacing', icon: '↔️' },
+  { id: 'effects', label: 'Effects', icon: '✨' },
+  { id: 'attributes', label: 'Attributes', icon: '⚙️' },
 ];

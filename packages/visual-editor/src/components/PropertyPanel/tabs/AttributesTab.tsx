@@ -1,10 +1,9 @@
 /**
- * 属性标签页
+ * 属性标签页 - Lovable style (Content section)
  */
 
 import { useState } from 'react';
 import { usePropertySync } from '../../../hooks/usePropertySync';
-import { TextInput } from '../controls';
 import type { SelectedElementInfo } from '../../../types';
 
 interface AttributesTabProps {
@@ -43,27 +42,24 @@ export default function AttributesTab({ element }: AttributesTabProps) {
 
   return (
     <div className="attributes-tab">
-      {/* 文本内容 */}
+      <h3 className="section-title">Content</h3>
+
+      {/* Text Content */}
       <div className="property-group">
-        <label className="property-label">文本内容</label>
-        <TextInput
+        <label className="property-label">Text</label>
+        <textarea
           value={element.textContent}
-          onChange={handleTextChange}
-          multiline
+          onChange={(e) => handleTextChange(e.target.value)}
+          className="text-input"
           rows={3}
-          debounce={300}
+          placeholder="Enter text content..."
         />
       </div>
 
-      <div className="section-divider" />
-
-      {/* 现有属性 */}
-      <div className="attributes-section">
-        <h4 className="section-title">HTML 属性</h4>
-
-        {displayAttributes.length === 0 ? (
-          <p className="empty-message">暂无自定义属性</p>
-        ) : (
+      {/* Existing Attributes */}
+      {displayAttributes.length > 0 && (
+        <div className="attributes-section">
+          <label className="property-label">Attributes</label>
           <div className="attributes-list">
             {displayAttributes.map(([name, value]) => (
               <div key={name} className="attribute-item">
@@ -77,30 +73,32 @@ export default function AttributesTab({ element }: AttributesTabProps) {
                 <button
                   onClick={() => handleRemoveAttribute(name)}
                   className="remove-btn"
-                  aria-label="删除属性"
+                  aria-label="Remove attribute"
                 >
-                  ×
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
                 </button>
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* 添加新属性 */}
+      {/* Add New Attribute */}
       <div className="add-attribute">
-        <h4 className="section-title">添加属性</h4>
-        <div className="add-attribute-form">
+        <label className="property-label">Add attribute</label>
+        <div className="add-attribute-row">
           <input
             type="text"
-            placeholder="属性名"
+            placeholder="Name"
             value={newAttrName}
             onChange={(e) => setNewAttrName(e.target.value)}
             className="add-input"
           />
           <input
             type="text"
-            placeholder="属性值"
+            placeholder="Value"
             value={newAttrValue}
             onChange={(e) => setNewAttrValue(e.target.value)}
             className="add-input"
@@ -110,50 +108,58 @@ export default function AttributesTab({ element }: AttributesTabProps) {
             disabled={!newAttrName || !newAttrValue}
             className="add-btn"
           >
-            添加
+            Add
           </button>
         </div>
       </div>
 
       <style>{`
         .attributes-tab {
-          padding: 12px;
+          padding: 16px;
+        }
+
+        .section-title {
+          font-size: 15px;
+          font-weight: 600;
+          color: #1f2937;
+          margin: 0 0 16px 0;
         }
 
         .property-group {
-          margin-bottom: 16px;
+          margin-bottom: 20px;
         }
 
         .property-label {
           display: block;
-          margin-bottom: 6px;
-          font-size: 12px;
+          font-size: 13px;
           font-weight: 500;
-          color: #374151;
+          color: #6b7280;
+          margin-bottom: 8px;
         }
 
-        .section-divider {
-          height: 1px;
-          background: #e5e7eb;
-          margin: 16px 0;
+        .text-input {
+          width: 100%;
+          padding: 12px;
+          border: none;
+          border-radius: 8px;
+          background: #f5f5f0;
+          font-size: 14px;
+          color: #1f2937;
+          resize: vertical;
+          outline: none;
+          font-family: inherit;
+        }
+
+        .text-input:focus {
+          box-shadow: 0 0 0 2px #3b82f6;
+        }
+
+        .text-input::placeholder {
+          color: #9ca3af;
         }
 
         .attributes-section {
-          margin-bottom: 16px;
-        }
-
-        .section-title {
-          font-size: 13px;
-          font-weight: 600;
-          color: #374151;
-          margin: 0 0 12px 0;
-        }
-
-        .empty-message {
-          color: #9ca3af;
-          font-size: 13px;
-          text-align: center;
-          padding: 12px;
+          margin-bottom: 20px;
         }
 
         .attributes-list {
@@ -166,82 +172,98 @@ export default function AttributesTab({ element }: AttributesTabProps) {
           display: flex;
           align-items: center;
           gap: 8px;
+          background: #f5f5f0;
+          padding: 8px 12px;
+          border-radius: 8px;
         }
 
         .attr-name {
           min-width: 80px;
-          font-size: 12px;
+          font-size: 13px;
           font-weight: 500;
           color: #6b7280;
         }
 
         .attr-value-input {
           flex: 1;
-          padding: 4px 8px;
-          border: 1px solid #d1d5db;
-          border-radius: 4px;
-          font-size: 12px;
+          padding: 8px 12px;
+          border: none;
+          border-radius: 6px;
+          background: #fff;
+          font-size: 13px;
+          color: #1f2937;
+          outline: none;
         }
 
         .attr-value-input:focus {
-          outline: none;
-          border-color: #3b82f6;
+          box-shadow: 0 0 0 2px #3b82f6;
         }
 
         .remove-btn {
-          width: 24px;
-          height: 24px;
+          width: 28px;
+          height: 28px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           border: none;
-          background: #fee2e2;
-          color: #ef4444;
-          border-radius: 4px;
+          background: transparent;
+          color: #9ca3af;
+          border-radius: 6px;
           cursor: pointer;
-          font-size: 16px;
-          line-height: 1;
+          transition: all 0.15s;
         }
 
         .remove-btn:hover {
-          background: #fecaca;
+          background: #fee2e2;
+          color: #ef4444;
         }
 
         .add-attribute {
-          margin-top: 16px;
+          margin-top: 8px;
         }
 
-        .add-attribute-form {
+        .add-attribute-row {
           display: flex;
           gap: 8px;
         }
 
         .add-input {
           flex: 1;
-          padding: 6px 8px;
-          border: 1px solid #d1d5db;
-          border-radius: 4px;
-          font-size: 12px;
+          padding: 10px 12px;
+          border: none;
+          border-radius: 8px;
+          background: #f5f5f0;
+          font-size: 13px;
+          color: #1f2937;
+          outline: none;
         }
 
         .add-input:focus {
-          outline: none;
-          border-color: #3b82f6;
+          box-shadow: 0 0 0 2px #3b82f6;
+        }
+
+        .add-input::placeholder {
+          color: #9ca3af;
         }
 
         .add-btn {
-          padding: 6px 12px;
-          background: #3b82f6;
+          padding: 10px 16px;
+          background: #1d4ed8;
           color: white;
           border: none;
-          border-radius: 4px;
-          font-size: 12px;
+          border-radius: 8px;
+          font-size: 13px;
+          font-weight: 500;
           cursor: pointer;
+          transition: background 0.15s;
         }
 
         .add-btn:hover {
-          background: #2563eb;
+          background: #1e40af;
         }
 
         .add-btn:disabled {
-          background: #9ca3af;
+          background: #d1d5db;
           cursor: not-allowed;
         }
       `}</style>

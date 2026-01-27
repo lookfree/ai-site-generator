@@ -5,6 +5,9 @@
 
 interface SelectedElementInfo {
   jsxId: string;
+  jsxFile?: string;
+  jsxLine?: number;
+  jsxCol?: number;
   tagName: string;
   className: string;
   textContent: string;
@@ -12,6 +15,10 @@ interface SelectedElementInfo {
   boundingRect: DOMRect;
   attributes: Record<string, string>;
   path: string[];
+  // Element index among siblings with the same jsxId (for .map() generated elements)
+  elementIndex?: number;
+  // Total count of elements with the same jsxId
+  elementCount?: number;
 }
 
 interface UpdatePayload {
@@ -417,7 +424,10 @@ class VisualEditController {
           break;
 
         case 'SELECT_BY_JSX_ID':
-          this.selectByJsxId((payload as { jsxId: string }).jsxId);
+          this.selectByJsxId(
+            (payload as { jsxId: string; elementIndex?: number }).jsxId,
+            (payload as { jsxId: string; elementIndex?: number }).elementIndex
+          );
           break;
 
         case 'GET_FULL_HTML':
@@ -457,8 +467,18 @@ class VisualEditController {
     this.postMessage('ELEMENT_SELECTED', info);
   }
 
-  private selectByJsxId(jsxId: string): void {
-    const element = document.querySelector(`[data-jsx-id="${jsxId}"]`) as HTMLElement;
+  private selectByJsxId(jsxId: string, elementIndex?: number): void {
+    let element: HTMLElement | null = null;
+
+    if (typeof elementIndex === 'number') {
+      // 如果提供了索引，使用索引查找正确的元素
+      const allElements = document.querySelectorAll(`[data-jsx-id="${jsxId}"]`);
+      element = allElements[elementIndex] as HTMLElement || null;
+    } else {
+      // 回退到 querySelector
+      element = document.querySelector(`[data-jsx-id="${jsxId}"]`) as HTMLElement;
+    }
+
     if (element) {
       this.selectElement(element);
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -489,6 +509,9 @@ class VisualEditController {
   private extractElementInfo(element: HTMLElement): SelectedElementInfo {
     const computedStyles = window.getComputedStyle(element);
     const relevantStyles: Record<string, string> = {};
+    const jsxFile = element.getAttribute('data-jsx-file') || undefined;
+    const jsxLine = element.getAttribute('data-jsx-line');
+    const jsxCol = element.getAttribute('data-jsx-col');
 
     // 提取相关样式属性
     const styleProps = [
@@ -518,8 +541,15 @@ class VisualEditController {
     // 计算 DOM 路径
     const path = this.getElementPath(element);
 
+    // 计算元素在相同 jsxId 元素中的索引 (用于 .map() 生成的元素)
+    const jsxId = element.getAttribute('data-jsx-id') || '';
+    const { elementIndex, elementCount } = this.getElementIndexAmongSiblings(element, jsxId);
+
     return {
-      jsxId: element.getAttribute('data-jsx-id') || '',
+      jsxId,
+      jsxFile,
+      jsxLine: jsxLine ? Number(jsxLine) : undefined,
+      jsxCol: jsxCol ? Number(jsxCol) : undefined,
       tagName: element.tagName.toLowerCase(),
       className: element.className,
       textContent: this.getDirectTextContent(element),
@@ -527,7 +557,36 @@ class VisualEditController {
       boundingRect: element.getBoundingClientRect(),
       attributes,
       path,
+      elementIndex,
+      elementCount,
     };
+  }
+
+  /**
+   * 获取元素在相同 jsxId 元素中的索引
+   * 用于处理 .map() 生成的多个相同 jsxId 的元素
+   */
+  private getElementIndexAmongSiblings(element: HTMLElement, jsxId: string): { elementIndex: number; elementCount: number } {
+    if (!jsxId) return { elementIndex: 0, elementCount: 1 };
+
+    // 查找所有具有相同 jsxId 的元素
+    const allElements = document.querySelectorAll(`[data-jsx-id="${jsxId}"]`);
+    const elementCount = allElements.length;
+
+    if (elementCount <= 1) {
+      return { elementIndex: 0, elementCount: 1 };
+    }
+
+    // 找到当前元素的索引
+    let elementIndex = 0;
+    for (let i = 0; i < allElements.length; i++) {
+      if (allElements[i] === element) {
+        elementIndex = i;
+        break;
+      }
+    }
+
+    return { elementIndex, elementCount };
   }
 
   private getDirectTextContent(element: HTMLElement): string {
@@ -558,10 +617,22 @@ class VisualEditController {
 
   // ========== 元素更新 ==========
 
-  private handleElementUpdate(payload: UpdatePayload): void {
-    const element = document.querySelector(
-      `[data-jsx-id="${payload.jsxId}"]`
-    ) as HTMLElement;
+  private handleElementUpdate(payload: UpdatePayload & { elementIndex?: number }): void {
+    // 优先使用当前选中的元素引用，避免 .map() 元素的 jsxId 重复问题
+    // 如果当前选中元素的 jsxId 与 payload 匹配，直接使用它
+    let element: HTMLElement | null = null;
+
+    if (this.selectedElement && this.selectedElement.getAttribute('data-jsx-id') === payload.jsxId) {
+      // 使用当前选中的元素引用（最准确）
+      element = this.selectedElement;
+    } else if (typeof payload.elementIndex === 'number') {
+      // 如果提供了 elementIndex，使用索引查找正确的元素
+      const allElements = document.querySelectorAll(`[data-jsx-id="${payload.jsxId}"]`);
+      element = allElements[payload.elementIndex] as HTMLElement || null;
+    } else {
+      // 回退到 querySelector（可能选错元素）
+      element = document.querySelector(`[data-jsx-id="${payload.jsxId}"]`) as HTMLElement;
+    }
 
     if (!element) return;
 
@@ -605,6 +676,12 @@ class VisualEditController {
       cls => cls.startsWith('__jsx_')
     );
     element.className = [...jsxClasses, ...className.split(' ')].join(' ');
+
+    // 如果是当前选中的元素，发送更新后的元素信息
+    if (element === this.selectedElement) {
+      const info = this.extractElementInfo(element);
+      this.postMessage('ELEMENT_UPDATED', info);
+    }
   }
 
   private updateElementStyle(element: HTMLElement, styles: Record<string, string>): void {
@@ -613,6 +690,12 @@ class VisualEditController {
         prop.replace(/([A-Z])/g, '-$1').toLowerCase(),
         value
       );
+    }
+
+    // 如果是当前选中的元素，发送更新后的元素信息
+    if (element === this.selectedElement) {
+      const info = this.extractElementInfo(element);
+      this.postMessage('ELEMENT_UPDATED', info);
     }
   }
 

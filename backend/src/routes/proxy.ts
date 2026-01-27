@@ -1,365 +1,8 @@
-// 代理路由 - 用于注入 Visual Edit 脚本
+// 代理路由 - 转发预览页面（保留 fly-server 已注入的脚本）
 import { Router, Request, Response } from 'express';
 import { getFlyBaseUrl } from '../services/flyio';
 
 const router = Router();
-
-// Visual Edit 注入脚本
-const VISUAL_EDIT_SCRIPT = `
-<script>
-(function() {
-  let selectedElement = null;
-  let highlightOverlay = null;
-  let hoverOverlay = null;
-  let editModeEnabled = false;
-  let isInlineEditing = false;
-  let originalText = '';
-
-  // 创建高亮覆盖层
-  function createHighlight() {
-    highlightOverlay = document.createElement('div');
-    highlightOverlay.id = 'visual-edit-highlight';
-    highlightOverlay.style.cssText = \`
-      position: absolute;
-      pointer-events: none;
-      border: 2px solid #3b82f6;
-      background: rgba(59, 130, 246, 0.1);
-      z-index: 99999;
-      transition: all 0.1s ease;
-      display: none;
-    \`;
-    document.body.appendChild(highlightOverlay);
-
-    hoverOverlay = document.createElement('div');
-    hoverOverlay.id = 'visual-edit-hover';
-    hoverOverlay.style.cssText = \`
-      position: absolute;
-      pointer-events: none;
-      border: 1px dashed #9ca3af;
-      background: rgba(156, 163, 175, 0.05);
-      z-index: 99998;
-      transition: all 0.05s ease;
-      display: none;
-    \`;
-    document.body.appendChild(hoverOverlay);
-  }
-
-  // 更新高亮位置
-  function updateHighlight(element) {
-    if (!highlightOverlay) return;
-    const rect = element.getBoundingClientRect();
-    highlightOverlay.style.top = (rect.top + window.scrollY) + 'px';
-    highlightOverlay.style.left = (rect.left + window.scrollX) + 'px';
-    highlightOverlay.style.width = rect.width + 'px';
-    highlightOverlay.style.height = rect.height + 'px';
-    highlightOverlay.style.display = 'block';
-  }
-
-  // 生成唯一选择器
-  function getUniqueSelector(el) {
-    if (el.id) return '#' + el.id;
-
-    const path = [];
-    while (el && el.nodeType === Node.ELEMENT_NODE) {
-      let selector = el.nodeName.toLowerCase();
-      if (el.className && typeof el.className === 'string') {
-        const classes = el.className.trim().split(/\\s+/).filter(c => c);
-        if (classes.length > 0) {
-          selector += '.' + classes.join('.');
-        }
-      }
-
-      // 添加索引以区分同级元素
-      const siblings = el.parentNode ? Array.from(el.parentNode.children) : [];
-      const sameTagSiblings = siblings.filter(s => s.nodeName === el.nodeName);
-      if (sameTagSiblings.length > 1) {
-        const index = sameTagSiblings.indexOf(el) + 1;
-        selector += ':nth-of-type(' + index + ')';
-      }
-
-      path.unshift(selector);
-
-      if (el.id) break;
-      el = el.parentNode;
-    }
-    return path.join(' > ');
-  }
-
-  // 发送元素选中信息
-  function sendElementSelected(el) {
-    const styles = getComputedStyle(el);
-    window.parent.postMessage({
-      type: 'ELEMENT_SELECTED',
-      data: {
-        selector: getUniqueSelector(el),
-        tagName: el.tagName,
-        textContent: el.textContent.trim().slice(0, 200),
-        innerHTML: el.innerHTML.slice(0, 500),
-        styles: {
-          color: styles.color,
-          backgroundColor: styles.backgroundColor,
-          fontSize: styles.fontSize,
-          fontWeight: styles.fontWeight,
-          padding: styles.padding,
-          margin: styles.margin,
-          borderRadius: styles.borderRadius,
-        }
-      }
-    }, '*');
-  }
-
-  // 点击处理函数
-  function handleClick(e) {
-    if (!editModeEnabled) return;
-    if (isInlineEditing) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    selectedElement = e.target;
-    updateHighlight(selectedElement);
-    sendElementSelected(selectedElement);
-  }
-
-  // 双击进入直接编辑模式
-  function handleDoubleClick(e) {
-    if (!editModeEnabled) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    const el = e.target;
-
-    // 检查是否是可编辑的文本元素
-    const editableTags = ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'SPAN', 'DIV', 'A', 'BUTTON', 'LI', 'LABEL', 'TD', 'TH'];
-    if (!editableTags.includes(el.tagName)) return;
-
-    // 如果已经在编辑其他元素，先结束
-    if (isInlineEditing && selectedElement && selectedElement !== el) {
-      finishInlineEdit();
-    }
-
-    selectedElement = el;
-    isInlineEditing = true;
-    originalText = el.textContent;
-
-    // 设置 contenteditable
-    el.contentEditable = 'true';
-    el.focus();
-
-    // 选中全部文本
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-
-    // 更新高亮为编辑状态
-    if (highlightOverlay) {
-      highlightOverlay.style.border = '2px solid #9333ea';
-      highlightOverlay.style.background = 'rgba(147, 51, 234, 0.1)';
-    }
-    updateHighlight(el);
-
-    console.log('[Visual Edit] Inline editing started');
-  }
-
-  // 结束直接编辑
-  function finishInlineEdit() {
-    if (!isInlineEditing || !selectedElement) return;
-
-    const el = selectedElement;
-    const newText = el.textContent.trim();
-
-    el.contentEditable = 'false';
-    isInlineEditing = false;
-
-    // 恢复高亮样式
-    if (highlightOverlay) {
-      highlightOverlay.style.border = '2px solid #3b82f6';
-      highlightOverlay.style.background = 'rgba(59, 130, 246, 0.1)';
-    }
-
-    // 如果文本有变化，通知父窗口
-    if (newText !== originalText) {
-      const selector = getUniqueSelector(el);
-
-      // 通知父窗口文本已更新（用于历史记录）
-      window.parent.postMessage({
-        type: 'INLINE_TEXT_UPDATED',
-        selector: selector,
-        oldValue: originalText,
-        newValue: newText
-      }, '*');
-
-      // 发送更新后的元素信息
-      sendElementSelected(el);
-    }
-
-    console.log('[Visual Edit] Inline editing finished');
-  }
-
-  // 处理编辑中的键盘事件
-  function handleKeyDown(e) {
-    if (!isInlineEditing) return;
-
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      finishInlineEdit();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      // 恢复原始文本
-      if (selectedElement) {
-        selectedElement.textContent = originalText;
-      }
-      finishInlineEdit();
-    }
-  }
-
-  // 处理失焦事件
-  function handleBlur(e) {
-    if (isInlineEditing && e.target === selectedElement) {
-      // 延迟处理，避免点击其他元素时冲突
-      setTimeout(() => {
-        if (isInlineEditing) {
-          finishInlineEdit();
-        }
-      }, 100);
-    }
-  }
-
-  // 鼠标悬停处理函数
-  function handleMouseover(e) {
-    if (!editModeEnabled) return;
-    if (isInlineEditing) return;
-    if (e.target === selectedElement) return;
-    if (!hoverOverlay) return;
-
-    const rect = e.target.getBoundingClientRect();
-    hoverOverlay.style.top = (rect.top + window.scrollY) + 'px';
-    hoverOverlay.style.left = (rect.left + window.scrollX) + 'px';
-    hoverOverlay.style.width = rect.width + 'px';
-    hoverOverlay.style.height = rect.height + 'px';
-    hoverOverlay.style.display = 'block';
-  }
-
-  function handleMouseout() {
-    if (hoverOverlay) {
-      hoverOverlay.style.display = 'none';
-    }
-  }
-
-  // 初始化
-  function init() {
-    createHighlight();
-
-    // 点击选中元素
-    document.addEventListener('click', handleClick, true);
-
-    // 双击进入直接编辑
-    document.addEventListener('dblclick', handleDoubleClick, true);
-
-    // 键盘事件
-    document.addEventListener('keydown', handleKeyDown, true);
-
-    // 失焦事件
-    document.addEventListener('blur', handleBlur, true);
-
-    // 鼠标悬停预览
-    document.addEventListener('mouseover', handleMouseover);
-    document.addEventListener('mouseout', handleMouseout);
-
-    // 接收来自父窗口的指令
-    window.addEventListener('message', (e) => {
-      if (e.data.type === 'UPDATE_ELEMENT') {
-        const { selector, property, value } = e.data;
-        const el = document.querySelector(selector) || selectedElement;
-
-        if (el) {
-          if (property === 'textContent') {
-            el.textContent = value;
-          } else if (property === 'innerHTML') {
-            el.innerHTML = value;
-          } else {
-            el.style[property] = value;
-          }
-
-          // 更新高亮
-          if (el === selectedElement) {
-            updateHighlight(el);
-          }
-
-          // 通知更新成功
-          window.parent.postMessage({
-            type: 'UPDATE_SUCCESS',
-            selector
-          }, '*');
-        }
-      } else if (e.data.type === 'CLEAR_SELECTION') {
-        if (isInlineEditing) {
-          finishInlineEdit();
-        }
-        selectedElement = null;
-        if (highlightOverlay) {
-          highlightOverlay.style.display = 'none';
-        }
-      } else if (e.data.type === 'ENABLE_EDIT_MODE') {
-        editModeEnabled = true;
-        document.body.style.cursor = 'crosshair';
-        console.log('[Visual Edit] Edit mode enabled');
-      } else if (e.data.type === 'DISABLE_EDIT_MODE') {
-        if (isInlineEditing) {
-          finishInlineEdit();
-        }
-        editModeEnabled = false;
-        selectedElement = null;
-        document.body.style.cursor = 'default';
-        if (highlightOverlay) highlightOverlay.style.display = 'none';
-        if (hoverOverlay) hoverOverlay.style.display = 'none';
-        console.log('[Visual Edit] Edit mode disabled');
-      } else if (e.data.type === 'GET_FULL_HTML') {
-        // 移除 Visual Edit 相关元素后返回 HTML
-        const clone = document.documentElement.cloneNode(true);
-        const highlight = clone.querySelector('#visual-edit-highlight');
-        const hover = clone.querySelector('#visual-edit-hover');
-        const scripts = clone.querySelectorAll('script');
-        const base = clone.querySelector('base');
-
-        if (highlight) highlight.remove();
-        if (hover) hover.remove();
-        if (base) base.remove();
-
-        // 移除 contenteditable 属性
-        clone.querySelectorAll('[contenteditable]').forEach(el => {
-          el.removeAttribute('contenteditable');
-        });
-
-        // 移除注入的 Visual Edit 脚本
-        scripts.forEach(script => {
-          if (script.textContent && script.textContent.includes('Visual Edit')) {
-            script.remove();
-          }
-        });
-
-        window.parent.postMessage({
-          type: 'FULL_HTML_RESPONSE',
-          html: '<!DOCTYPE html>\\n' + clone.outerHTML
-        }, '*');
-      }
-    });
-
-    console.log('[Visual Edit] Initialized (edit mode disabled by default)');
-  }
-
-  // DOM 加载完成后初始化
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-})();
-</script>
-`;
 
 // 代理获取预览页面（从 Fly.io 获取，注入 Visual Edit 脚本）
 router.get('/:projectId', async (req: Request, res: Response) => {
@@ -367,15 +10,22 @@ router.get('/:projectId', async (req: Request, res: Response) => {
     const projectId = req.params.projectId;
     const flyBaseUrl = getFlyBaseUrl();
 
-    // 从 Fly.io 获取项目的 index.html
-    const response = await fetch(`${flyBaseUrl}/p/${projectId}`);
+    // 从 Fly.io 获取项目的 index.html (添加尾部斜杠避免 302 重定向)
+    const response = await fetch(`${flyBaseUrl}/p/${projectId}/`);
     if (!response.ok) {
       return res.status(response.status).send('Failed to fetch preview from Fly.io');
     }
 
     let html = await response.text();
 
-    // 添加 <base> 标签以修正相对路径
+    // 移除现有的 <base> 标签
+    html = html.replace(/<base\s+[^>]*>/gi, '');
+
+    // 将 /p/{projectId}/ 路径替换为 /api/proxy/{projectId}/
+    html = html.replace(new RegExp(`/p/${projectId}/`, 'g'), `/api/proxy/${projectId}/`);
+    html = html.replace(new RegExp(`"/p/${projectId}"`, 'g'), `"/api/proxy/${projectId}"`);
+
+    // 添加新的 <base> 标签以修正相对路径
     const baseTag = `<base href="/api/proxy/${projectId}/">`;
     if (html.includes('<head>')) {
       html = html.replace('<head>', `<head>\n${baseTag}`);
@@ -383,13 +33,10 @@ router.get('/:projectId', async (req: Request, res: Response) => {
       html = html.replace('<html>', `<html>\n<head>${baseTag}</head>`);
     }
 
-    // 注入 Visual Edit 脚本（在 </body> 之前）
-    if (html.includes('</body>')) {
-      html = html.replace('</body>', VISUAL_EDIT_SCRIPT + '</body>');
-    } else {
-      html += VISUAL_EDIT_SCRIPT;
-    }
-
+    // 禁用缓存以确保路径重写生效
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
     res.type('html').send(html);
   } catch (error) {
     console.error('[PROXY] Error fetching preview:', error);
@@ -410,17 +57,60 @@ router.get('/:projectId/:filename(*)', async (req: Request, res: Response) => {
       return res.status(response.status).send('Not found');
     }
 
-    const content = await response.text();
+    let content = await response.text();
 
-    // 设置 Content-Type
+    // 重写 JavaScript/TypeScript/CSS 文件中的路径
+    // 包括 .js, .tsx, .ts, .mjs, .css 文件以及 @vite/*, @react-refresh 等特殊路由
+    // 注意：Vite 会将 CSS 文件转换为 JS 模块，所以 CSS 也需要路径重写
+    const needsPathRewrite =
+      filename.endsWith('.js') ||
+      filename.endsWith('.mjs') ||
+      filename.endsWith('.tsx') ||
+      filename.endsWith('.ts') ||
+      filename.endsWith('.css') ||
+      filename.startsWith('@vite/') ||
+      filename.startsWith('@react-refresh');
+
+    if (needsPathRewrite) {
+      // 将 /p/{projectId}/ 路径替换为 /api/proxy/{projectId}/
+      content = content.replace(new RegExp(`/p/${projectId}/`, 'g'), `/api/proxy/${projectId}/`);
+      content = content.replace(new RegExp(`"/p/${projectId}"`, 'g'), `"/api/proxy/${projectId}"`);
+    }
+
+    // 禁用缓存以确保路径重写生效
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+
+    // 设置 Content-Type (必须在 send 之前，使用 set 确保不被覆盖)
+    // 注意：Vite 在开发模式下会将 CSS 转换为 JS 模块，所以需要检测内容
     if (filename.endsWith('.css')) {
-      res.type('css');
-    } else if (filename.endsWith('.js')) {
-      res.type('javascript');
+      // Vite 会将 CSS 转换为 JS 模块（以 import 开头）
+      if (content.startsWith('import ')) {
+        res.set('Content-Type', 'application/javascript; charset=utf-8');
+      } else {
+        res.set('Content-Type', 'text/css; charset=utf-8');
+      }
+    } else if (filename.endsWith('.js') || filename.endsWith('.mjs')) {
+      res.set('Content-Type', 'application/javascript; charset=utf-8');
+    } else if (filename.endsWith('.tsx') || filename.endsWith('.ts')) {
+      // TypeScript/TSX 文件需要作为 JavaScript 模块提供
+      res.set('Content-Type', 'application/javascript; charset=utf-8');
+    } else if (filename.startsWith('@vite/') || filename.startsWith('@react-refresh')) {
+      // Vite 特殊路由也是 JavaScript 模块
+      res.set('Content-Type', 'application/javascript; charset=utf-8');
     } else if (filename.endsWith('.json')) {
-      res.type('json');
+      res.set('Content-Type', 'application/json; charset=utf-8');
     } else if (filename.endsWith('.html')) {
-      res.type('html');
+      res.set('Content-Type', 'text/html; charset=utf-8');
+    } else if (filename.endsWith('.svg')) {
+      res.set('Content-Type', 'image/svg+xml');
+    } else if (filename.endsWith('.png')) {
+      res.set('Content-Type', 'image/png');
+    } else if (filename.endsWith('.jpg') || filename.endsWith('.jpeg')) {
+      res.set('Content-Type', 'image/jpeg');
+    } else if (filename.endsWith('.woff') || filename.endsWith('.woff2')) {
+      res.set('Content-Type', 'font/woff2');
     }
 
     res.send(content);

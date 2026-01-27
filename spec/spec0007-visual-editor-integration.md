@@ -676,6 +676,109 @@ export function PropertyPanel({ projectId, component, onUpdate }: PropertyPanelP
 })();
 ```
 
+### 3.6 元素匹配策略
+
+由于生成的代码中没有 `data-jsx-id` 或 `data-component-id` 属性，需要使用 **文本匹配** 策略将 DOM 元素映射到源代码中的 JSX 节点。
+
+#### 匹配流程
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        元素匹配策略                                      │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  1. 用户点击元素，获取:                                                  │
+│     - textContent (原始文本)                                            │
+│     - tagName (标签名)                                                  │
+│     - className (类名)                                                  │
+│                                                                         │
+│  2. 用户编辑属性，保存时发送:                                            │
+│     - originalText: 原始文本内容                                        │
+│     - newText: 修改后的文本                                             │
+│     - tagName: 元素标签 (可选, 用于精确匹配)                             │
+│                                                                         │
+│  3. AST 编辑器遍历 JSX 树:                                              │
+│     - 查找 textContent === originalText 的节点                          │
+│     - 可选: 验证 tagName 匹配                                           │
+│     - 替换节点的 children 为新文本                                       │
+│                                                                         │
+│  4. 生成新代码，写入 fly-server                                         │
+│                                                                         │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 实现代码
+
+```typescript
+// backend/src/services/ast/index.ts
+
+/**
+ * 根据文本内容执行编辑操作
+ * 当源代码中没有 data-jsx-id 时使用此方法
+ */
+async editByText(
+  code: string,
+  filePath: string,
+  originalText: string,
+  newText: string,
+  tagName?: string
+): Promise<AstEditResult> {
+  const ast = this.parse(code, filePath);
+  const normalizedOriginal = originalText.trim();
+  let modified = false;
+
+  const newAst = this.transformAST(ast, (node, parent) => {
+    if (modified) return node;
+
+    if (node.type === 'JSXOpeningElement') {
+      const parentObj = parent as { type: string; children: unknown[] };
+      if (parentObj?.type !== 'JSXElement') return node;
+
+      // 检查标签名
+      const elementName = this.getElementName(node.name);
+      if (tagName && elementName.toLowerCase() !== tagName.toLowerCase()) return node;
+
+      // 检查文本内容
+      const nodeText = this.extractTextContent(parentObj.children);
+      if (nodeText?.trim() === normalizedOriginal) {
+        modified = true;
+        parentObj.children = [this.createJSXText(newText)];
+      }
+    }
+    return node;
+  });
+
+  if (!modified) {
+    return { success: false, error: `Text not found: "${originalText}"` };
+  }
+
+  return { success: true, code: this.generate(newAst) };
+}
+```
+
+#### API 更新
+
+```typescript
+// POST /api/code-editor/:projectId/update-text
+// Request body:
+{
+  "componentId": "2-252-24",      // 运行时 ID (备用)
+  "text": "New text content",     // 新文本
+  "originalText": "Old text",     // 原始文本 (用于匹配)
+  "tagName": "span",              // 标签名 (可选, 用于精确匹配)
+  "file": "src/App.tsx"           // 文件路径
+}
+```
+
+#### 限制与注意事项
+
+| 场景 | 处理方式 |
+|------|---------|
+| 重复文本 | 只修改第一个匹配项 |
+| 空文本 | 不支持，需要其他匹配策略 |
+| 动态文本 | 不支持 (如 `{variable}`) |
+| 嵌套文本 | 只匹配直接文本子节点 |
+
 ---
 
 ## 4. API 设计

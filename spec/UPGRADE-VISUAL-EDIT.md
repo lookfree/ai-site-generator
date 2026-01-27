@@ -6,20 +6,104 @@
 
 ---
 
+## 实现状态总览 (2025-01)
+
+### ✅ 已完成的核心功能
+
+| 模块 | 包名 | 状态 | 说明 |
+|------|-----|------|------|
+| **Vite JSX Tagger** | `vite-plugin-jsx-tagger` | ✅ 已实现 | Babel 插件注入 data-jsx-* 属性 |
+| **位置信息注入** | `vite-plugin-jsx-tagger` | ✅ 已实现 | data-jsx-file, data-jsx-line, data-jsx-col |
+| **源码映射 API** | `vite-plugin-jsx-tagger` | ✅ 已实现 | /__jsx-source-map, /__jsx-locate API |
+| **AST 处理系统** | `ast-processor` | ✅ 已实现 | SWC WASM 解析、变换、生成 |
+| **Tailwind 映射** | `ast-processor` | ✅ 已实现 | CSS 到 Tailwind 类名转换 |
+| **Visual Editor UI** | `visual-editor` | ✅ 已实现 | PropertyPanel, 控件组件 |
+| **注入脚本** | `visual-editor/injection` | ✅ 已实现 | 元素选择、高亮、拖拽 |
+| **HMR 系统** | `hmr-system` | ✅ 已实现 | Vite 进程管理、WebSocket 代理 |
+
+### ⚠️ 待迁移 (内联实现 → packages)
+
+| 当前位置 | 迁移目标 | 优先级 |
+|---------|---------|--------|
+| `fly-server/src/services/scaffolder.ts` generateJsxIdPlugin() | `vite-plugin-jsx-tagger` | 高 |
+| `fly-server/static/visual-edit-script.js` | `visual-editor/injection` | 高 |
+| `backend/src/routes/proxy.ts` VISUAL_EDIT_SCRIPT | `visual-editor/injection` | 中 |
+| `frontend/src/components/VisualEditPanel.tsx` | `visual-editor` PropertyPanel | 中 |
+
+### 📦 Packages 模块化架构
+
+```
+packages/
+├── vite-plugin-jsx-tagger/     # 编译时 JSX 标记注入
+│   ├── src/
+│   │   ├── index.ts            # Vite 插件入口
+│   │   ├── babel-plugin.ts     # Babel 变换插件
+│   │   ├── id-generator.ts     # 稳定 ID 生成
+│   │   ├── source-map.ts       # 源码映射管理
+│   │   └── types.ts            # 类型定义
+│   └── tests/
+│
+├── ast-processor/              # AST 解析与变换
+│   ├── src/
+│   │   ├── parser/             # SWC WASM 解析器
+│   │   ├── traverser/          # AST 遍历器
+│   │   ├── transformers/       # 变换器 (text, style, attribute, structure)
+│   │   ├── generator/          # 代码生成器
+│   │   ├── tailwind/           # Tailwind 映射 & 预设
+│   │   └── utils/              # 工具函数
+│   └── tests/
+│
+├── visual-editor/              # Visual Editor UI 组件
+│   ├── src/
+│   │   ├── components/         # React 组件
+│   │   ├── hooks/              # 自定义 Hooks
+│   │   ├── stores/             # Zustand 状态管理
+│   │   ├── services/           # 服务层
+│   │   └── utils/              # 工具函数
+│   ├── injection/              # 注入脚本
+│   │   └── visual-edit-script.ts
+│   └── tests/
+│
+├── hmr-system/                 # HMR 热更新系统
+│   ├── src/
+│   │   ├── server/             # Vite 服务器管理
+│   │   ├── client/             # HMR 客户端
+│   │   └── sync/               # 文件同步、冲突解决
+│   └── tests/
+│
+├── ai-generator/               # AI 代码生成
+├── template-generator/         # 模板生成器
+└── project-template/           # 项目模板
+```
+
+### 依赖关系
+
+```
+vite-plugin-jsx-tagger (基础层 - 编译时标记)
+         ↓
+    ast-processor (代码处理 - 运行时变换)
+         ↓
+    visual-editor (UI + 注入脚本)
+         ↓
+     hmr-system (实时同步)
+```
+
+---
+
 ## 一、当前系统 vs Lovable 对比分析
 
 ### 1. 功能对比矩阵
 
-| 功能模块 | 当前系统 | Lovable | 差距分析 |
+| 功能模块 | 当前系统 | Lovable | 实现状态 |
 |---------|---------|---------|---------|
-| **代码标记** | CSS 选择器 | Stable JSX Tagging | ❌ 缺失编译时标记 |
-| **源码定位** | 无 | 双向映射 (UI ↔ 源码) | ❌ 无法定位到源码位置 |
-| **代码修改** | 正则替换 HTML | AST 解析修改 | ❌ 不安全，不支持 JSX |
-| **样式系统** | 内联 style | Tailwind CSS 生成 | ❌ 代码质量差 |
-| **热更新** | 全页刷新 | HMR 热模块替换 | ❌ 体验差，状态丢失 |
-| **乐观更新** | 有 (DOM 操作) | 有 (AST + DOM) | ⚠️ 部分支持 |
-| **撤销/重做** | 有 (50 条历史) | 有 | ✅ 已支持 |
-| **多设备预览** | 有 (3 种视口) | 有 | ✅ 已支持 |
+| **代码标记** | Babel 插件 + data-jsx-* | Stable JSX Tagging | ✅ 已实现 (fly-server 内联 + packages) |
+| **源码定位** | data-jsx-file/line/col | 双向映射 (UI ↔ 源码) | ✅ 已实现 |
+| **代码修改** | SWC WASM AST | AST 解析修改 | ✅ 已实现 (ast-processor) |
+| **样式系统** | Tailwind 映射 | Tailwind CSS 生成 | ✅ 已实现 (ast-processor/tailwind) |
+| **热更新** | Vite Dev Server + HMR | HMR 热模块替换 | ✅ 已实现 (hmr-system) |
+| **乐观更新** | DOM + AST | AST + DOM | ✅ 已实现 (visual-editor) |
+| **撤销/重做** | useEditHistory | 有 | ✅ 已实现 |
+| **多设备预览** | DeviceSelector | 有 | ✅ 已实现 |
 
 ### 2. 架构对比
 
@@ -59,6 +143,107 @@ Lovable 架构 (目标):
     │ 标记注入 │─────▶│ AST修改  │─────▶│ HMR更新  │
     └──────────┘      └──────────┘      └──────────┘
 ```
+
+---
+
+## 重构路线图：从内联实现迁移到 packages
+
+### Phase 1: vite-plugin-jsx-tagger 集成
+**风险: 低** | **影响: fly-server**
+
+```
+当前: fly-server/src/services/scaffolder.ts → generateJsxIdPlugin() (内联 Babel 插件)
+目标: 使用 packages/vite-plugin-jsx-tagger
+```
+
+**步骤:**
+1. 在生成的项目 `package.json` 中添加 `vite-plugin-jsx-tagger` 依赖
+2. 更新 `generateViteConfig()` 使用包导入而非内联插件
+3. 删除 `generateJsxIdPlugin()` 函数 (~90行)
+4. 测试生成的项目是否正确注入 data-jsx-* 属性
+
+**验证:**
+- 生成新项目
+- 检查 DOM 元素是否有 `data-jsx-id`, `data-jsx-file`, `data-jsx-line`, `data-jsx-col`
+- 验证 HMR 热更新正常
+
+### Phase 2: visual-edit-script 集成
+**风险: 中** | **影响: fly-server, backend**
+
+```
+当前:
+  - fly-server/static/visual-edit-script.js (~600行)
+  - backend/src/routes/proxy.ts VISUAL_EDIT_SCRIPT (~500行内联)
+
+目标: 使用 packages/visual-editor/injection/visual-edit-script.ts
+```
+
+**步骤:**
+1. 构建 `packages/visual-editor` 确保 injection 脚本可用
+2. 更新 `fly-server/src/index.ts` 脚本注入路径
+3. 更新 `backend/src/routes/proxy.ts` 使用包版本脚本
+4. 删除 `fly-server/static/visual-edit-script.js`
+5. 测试元素选择、高亮、拖拽功能
+
+**验证:**
+- 点击预览中的元素
+- 检查元素高亮、选中框
+- 验证 postMessage 通信
+- 测试拖拽调整大小
+
+### Phase 3: VisualEditPanel UI 集成
+**风险: 中高** | **影响: frontend**
+
+```
+当前: frontend/src/components/VisualEditPanel.tsx (内联控件)
+目标: 使用 packages/visual-editor PropertyPanel 组件
+```
+
+**步骤:**
+1. 在 `frontend/package.json` 添加 `visual-editor` 依赖
+2. 创建适配层匹配现有 props 接口
+3. 逐步替换内联控件为包组件
+4. 迁移状态管理到 `useEditorStore`
+5. 测试所有编辑操作 (文本、样式、布局)
+
+**验证:**
+- 打开属性面板
+- 修改文本内容 → 验证实时更新
+- 修改样式属性 → 验证 Tailwind 类生成
+- 测试撤销/重做
+- 保存更改 → 验证持久化
+
+### Phase 4: AST 处理服务适配
+**风险: 高** | **影响: backend**
+
+```
+当前: backend/src/services/ast/index.ts (服务端 SWC 原生)
+目标: 统一 API 接口与 packages/ast-processor 一致
+```
+
+**策略:** 保留服务端原生 SWC，但统一 API 接口
+
+**步骤:**
+1. 定义统一的 AST 处理接口 (TransformRequest, TransformResult)
+2. 创建 `backend/src/services/ast/adapter.ts` 适配层
+3. 逐步重构 `code-editor.ts` 使用新接口
+4. 提取通用类型到共享 types 包
+5. 测试所有编辑操作保持正常
+
+**验证:**
+- 位置匹配编辑测试
+- 文本匹配编辑测试
+- 批量编辑测试
+- 性能基准测试
+
+### 风险与回滚策略
+
+| Phase | 风险 | 回滚策略 |
+|-------|------|---------|
+| 1 | 生成项目构建失败 | 恢复内联插件生成 |
+| 2 | 元素选择不工作 | 恢复静态脚本文件 |
+| 3 | UI 功能缺失 | 保留原组件作为备份 |
+| 4 | AST 处理错误 | 保持原有服务不变 |
 
 ---
 
@@ -975,7 +1160,7 @@ class HMRChannel {
 
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { jsxTaggerPlugin } from './vite-plugin-jsx-tagger';
+import { jsxTaggerPlugin } from './vite-1er';
 
 export default defineConfig({
   plugins: [

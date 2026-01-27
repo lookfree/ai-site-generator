@@ -3,6 +3,7 @@
  * 生成 React + Vite + Tailwind 项目的基础文件
  */
 
+// (no local path dependencies needed)
 import type { ProjectConfig, ScaffoldResult } from '../types';
 
 /**
@@ -89,12 +90,6 @@ export function generateScaffold(config: ProjectConfig): ScaffoldResult {
     content: generateMainTsx(),
   });
 
-  // jsx-id-plugin.js - 用于注入 data-jsx-id 属性的 Babel 插件
-  files.push({
-    path: 'jsx-id-plugin.js',
-    content: generateJsxIdPlugin(),
-  });
-
   return {
     success: true,
     files,
@@ -118,6 +113,7 @@ function slugify(str: string): string {
 }
 
 function generatePackageJson(config: ProjectConfig): string {
+  const jsxTaggerDependency = process.env.JSX_TAGGER_DEP || 'vite-plugin-jsx-tagger';
   const pkg = {
     name: slugify(config.projectName),
     private: true,
@@ -136,6 +132,8 @@ function generatePackageJson(config: ProjectConfig): string {
       'tailwind-merge': '^2.0.0',
     },
     devDependencies: {
+      '@babel/core': '^7.23.0',
+      '@babel/plugin-syntax-typescript': '^7.23.0',
       '@types/react': '^18.2.37',
       '@types/react-dom': '^18.2.15',
       '@typescript-eslint/eslint-plugin': '^6.10.0',
@@ -149,6 +147,7 @@ function generatePackageJson(config: ProjectConfig): string {
       'tailwindcss': '^3.3.5',
       'typescript': '^5.2.2',
       'vite': '^5.0.0',
+      'vite-plugin-jsx-tagger': jsxTaggerDependency,
     },
   };
 
@@ -157,27 +156,39 @@ function generatePackageJson(config: ProjectConfig): string {
 
 function generateViteConfig(config: ProjectConfig): string {
   const idPrefix = config.projectId.slice(0, 8);
+
   return `import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import jsxIdPlugin from './jsx-id-plugin.js';
+import { jsxTaggerPlugin } from 'vite-plugin-jsx-tagger';
 
 export default defineConfig({
   plugins: [
-    react({
-      babel: {
-        plugins: [jsxIdPlugin],
-      },
+    // JSX Tagger 必须在 React 插件之前，以便在编译时注入 data-jsx-* 属性
+    jsxTaggerPlugin({
+      idPrefix: '${idPrefix}',
+      removeInProduction: false,
     }),
+    react(),
   ],
   server: {
     port: 5173,
     host: true,
+    // 允许所有 hosts 以支持代理访问
+    allowedHosts: 'all',
+    // HMR 不设置自定义 host，使用页面 origin
+    // 这样 WebSocket 会通过完整的 proxy 链:
+    // localhost:3000 (frontend) -> localhost:3001 (backend) -> fly-server -> Vite
     hmr: {
-      protocol: 'ws',
+      overlay: true,
     },
   },
-  define: {
-    __PROJECT_ID__: JSON.stringify('${idPrefix}'),
+  build: {
+    sourcemap: true,
+  },
+  resolve: {
+    alias: {
+      '@': '/src',
+    },
   },
 });
 `;
@@ -388,99 +399,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>
 );
-`;
-}
-
-function generateJsxIdPlugin(): string {
-  return `/**
- * Babel 插件：为 JSX 元素注入 data-jsx-* 属性
- * 用于 Visual Editor 的元素定位和源代码映射
- *
- * 注入属性:
- * - data-jsx-id: 稳定的唯一标识 (MD5 hash)
- * - data-jsx-file: 源文件路径 (相对路径)
- * - data-jsx-line: 源代码行号
- * - data-jsx-col: 源代码列号
- */
-
-import { createHash } from 'crypto';
-
-/**
- * 生成稳定的 JSX ID (基于文件路径+行号+列号的 MD5 哈希)
- */
-function generateStableId(filePath, line, column) {
-  const input = filePath + ':' + line + ':' + column;
-  return createHash('md5').update(input).digest('hex').slice(0, 8);
-}
-
-/**
- * 将文件路径转换为相对路径 (去除项目根目录前缀)
- */
-function normalizeFilePath(filename) {
-  // 提取 src/ 开头的相对路径
-  const srcIndex = filename.indexOf('src/');
-  if (srcIndex !== -1) {
-    return filename.slice(srcIndex);
-  }
-  // 如果没有 src/，返回文件名
-  const lastSlash = filename.lastIndexOf('/');
-  return lastSlash !== -1 ? filename.slice(lastSlash + 1) : filename;
-}
-
-/**
- * 创建 JSX 属性节点
- */
-function createJsxAttr(name, value) {
-  return {
-    type: 'JSXAttribute',
-    name: { type: 'JSXIdentifier', name },
-    value: { type: 'StringLiteral', value },
-  };
-}
-
-export default function jsxIdPlugin() {
-  return {
-    name: 'jsx-id-injector',
-    visitor: {
-      JSXOpeningElement(path, state) {
-        const filename = state.filename || 'unknown';
-        const { node } = path;
-
-        // 跳过 Fragment
-        if (node.name.type === 'JSXIdentifier' && node.name.name === 'Fragment') {
-          return;
-        }
-        if (node.name.type === 'JSXMemberExpression' &&
-            node.name.property?.name === 'Fragment') {
-          return;
-        }
-
-        // 检查是否已有 data-jsx-id 属性
-        const hasJsxId = node.attributes.some(attr =>
-          attr.type === 'JSXAttribute' &&
-          attr.name?.name === 'data-jsx-id'
-        );
-        if (hasJsxId) return;
-
-        // 获取位置信息
-        const line = node.loc?.start?.line || 0;
-        const col = node.loc?.start?.column || 0;
-        const filePath = normalizeFilePath(filename);
-
-        // 生成稳定的唯一 ID
-        const jsxId = generateStableId(filePath, line, col);
-
-        // 注入 data-jsx-* 属性
-        node.attributes.push(
-          createJsxAttr('data-jsx-id', jsxId),
-          createJsxAttr('data-jsx-file', filePath),
-          createJsxAttr('data-jsx-line', String(line)),
-          createJsxAttr('data-jsx-col', String(col))
-        );
-      },
-    },
-  };
-}
 `;
 }
 

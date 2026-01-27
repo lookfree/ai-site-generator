@@ -1,18 +1,28 @@
-import { useState, useEffect, useCallback } from 'react';
+/**
+ * Visual Edit Panel - 重构版
+ * 使用 visual-editor 包的控件组件，保持原有的 props 接口
+ */
 
-interface SelectedElementInfo {
+import { useState, useEffect, useCallback } from 'react';
+import {
+  ColorPicker,
+  SelectControl,
+  SliderControl,
+  useEditorStore,
+  type SelectedElementInfo as PackageElementInfo,
+} from 'visual-editor';
+
+// 扩展 SelectedElementInfo 类型，添加 AST 匹配所需的位置信息
+interface SelectedElementInfo extends Omit<PackageElementInfo, 'jsxId'> {
   jsxId: string;
   // Source code location info (for AST matching)
   jsxFile?: string;
   jsxLine?: number;
   jsxCol?: number;
-  tagName: string;
-  className: string;
-  textContent: string;
-  computedStyles: Record<string, string>;
-  boundingRect: DOMRect;
-  attributes: Record<string, string>;
-  path: string[];
+  // Element index among siblings with the same jsxId (for .map() generated elements)
+  elementIndex?: number;
+  // Total count of elements with the same jsxId
+  elementCount?: number;
 }
 
 interface VisualEditPanelProps {
@@ -32,6 +42,8 @@ interface SavedChanges {
   jsxFile?: string;
   jsxLine?: number;
   jsxCol?: number;
+  // Flag indicating this is a .map() element (style changes affect all elements)
+  isMapElement?: boolean;
 }
 
 interface ElementUpdate {
@@ -39,64 +51,68 @@ interface ElementUpdate {
   value: string | Record<string, string>;
 }
 
-// 颜色选择器组件
-function ColorPicker({
-  label,
-  value,
-  onChange
-}: {
-  label: string;
-  value: string;
-  onChange: (color: string) => void;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const presetColors = [
-    '#000000', '#ffffff', '#ef4444', '#f97316', '#eab308',
-    '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#6b7280'
-  ];
+// 样式选项配置
+const FONT_SIZE_OPTIONS = [
+  { value: '', label: 'Select' },
+  { value: '12px', label: '12px' },
+  { value: '14px', label: '14px' },
+  { value: '16px', label: '16px' },
+  { value: '18px', label: '18px' },
+  { value: '20px', label: '20px' },
+  { value: '24px', label: '24px' },
+  { value: '32px', label: '32px' },
+  { value: '48px', label: '48px' },
+];
 
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-sm text-gray-600">{label}</span>
-      <div className="relative">
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-2 px-2 py-1 border border-gray-200 rounded hover:bg-gray-50"
-        >
-          <div
-            className="w-5 h-5 rounded border border-gray-300"
-            style={{ backgroundColor: value || 'transparent' }}
-          />
-          <span className="text-xs text-gray-500 font-mono">
-            {value || 'inherit'}
-          </span>
-        </button>
-        {isOpen && (
-          <div className="absolute right-0 top-full mt-1 p-2 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-            <div className="grid grid-cols-5 gap-1 mb-2">
-              {presetColors.map(color => (
-                <button
-                  key={color}
-                  onClick={() => { onChange(color); setIsOpen(false); }}
-                  className="w-6 h-6 rounded border border-gray-200 hover:scale-110 transition-transform"
-                  style={{ backgroundColor: color }}
-                />
-              ))}
-            </div>
-            <input
-              type="color"
-              value={value || '#000000'}
-              onChange={(e) => { onChange(e.target.value); setIsOpen(false); }}
-              className="w-full h-8 cursor-pointer"
-            />
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+const FONT_WEIGHT_OPTIONS = [
+  { value: '', label: 'Select' },
+  { value: '300', label: 'Light' },
+  { value: '400', label: 'Normal' },
+  { value: '500', label: 'Medium' },
+  { value: '600', label: 'Semibold' },
+  { value: '700', label: 'Bold' },
+];
+
+const BORDER_WIDTH_OPTIONS = [
+  { value: '', label: 'Select' },
+  { value: '0px', label: 'None' },
+  { value: '1px', label: '1px' },
+  { value: '2px', label: '2px' },
+  { value: '3px', label: '3px' },
+  { value: '4px', label: '4px' },
+];
+
+const BORDER_STYLE_OPTIONS = [
+  { value: '', label: 'Select' },
+  { value: 'solid', label: 'Solid' },
+  { value: 'dashed', label: 'Dashed' },
+  { value: 'dotted', label: 'Dotted' },
+  { value: 'none', label: 'None' },
+];
+
+const BORDER_RADIUS_OPTIONS = [
+  { value: '', label: 'Select' },
+  { value: '0px', label: 'None' },
+  { value: '4px', label: 'Small' },
+  { value: '8px', label: 'Medium' },
+  { value: '12px', label: 'Large' },
+  { value: '16px', label: 'XL' },
+  { value: '9999px', label: 'Full' },
+];
+
+const BOX_SHADOW_OPTIONS = [
+  { value: '', label: 'Select' },
+  { value: 'none', label: 'None' },
+  { value: '0 1px 2px 0 rgba(0,0,0,0.05)', label: 'Small' },
+  { value: '0 4px 6px -1px rgba(0,0,0,0.1)', label: 'Medium' },
+  { value: '0 10px 15px -3px rgba(0,0,0,0.1)', label: 'Large' },
+  { value: '0 25px 50px -12px rgba(0,0,0,0.25)', label: 'XL' },
+];
 
 function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }: VisualEditPanelProps) {
+  // 使用 visual-editor 的 store 同步状态
+  const setSelectedElement = useEditorStore(state => state.setSelectedElement);
+
   const [textContent, setTextContent] = useState('');
   const [textColor, setTextColor] = useState('');
   const [bgColor, setBgColor] = useState('');
@@ -120,7 +136,7 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
   // Effects states
   const [borderRadius, setBorderRadius] = useState('');
   const [boxShadow, setBoxShadow] = useState('');
-  const [opacity, setOpacity] = useState('100');
+  const [opacity, setOpacity] = useState(100);
 
   // 存储原始值用于比较
   const [originalValues, setOriginalValues] = useState<{
@@ -140,8 +156,28 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
     borderStyle: string;
     borderRadius: string;
     boxShadow: string;
-    opacity: string;
+    opacity: number;
   } | null>(null);
+
+  // 同步选中元素到 store (转换类型)
+  useEffect(() => {
+    if (selectedElement) {
+      // 将扩展类型转换为 package 类型
+      const packageElement: PackageElementInfo = {
+        jsxId: selectedElement.jsxId,
+        tagName: selectedElement.tagName,
+        className: selectedElement.className,
+        textContent: selectedElement.textContent,
+        computedStyles: selectedElement.computedStyles,
+        boundingRect: selectedElement.boundingRect,
+        attributes: selectedElement.attributes,
+        path: selectedElement.path,
+      };
+      setSelectedElement(packageElement);
+    } else {
+      setSelectedElement(null);
+    }
+  }, [selectedElement, setSelectedElement]);
 
   // 解析计算样式
   useEffect(() => {
@@ -199,7 +235,7 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
       // 解析 Effects
       const bRadius = styles.borderRadius || '';
       const bShadow = styles.boxShadow || '';
-      const opc = styles.opacity ? String(Math.round(parseFloat(styles.opacity) * 100)) : '100';
+      const opc = styles.opacity ? Math.round(parseFloat(styles.opacity) * 100) : 100;
       setBorderRadius(bRadius);
       setBoxShadow(bShadow);
       setOpacity(opc);
@@ -257,9 +293,8 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
   // 更新 hasChanges 状态
   useEffect(() => {
     const changed = checkHasChanges();
-    console.log('[VisualEditPanel] checkHasChanges:', changed, { bgColor, originalBgColor: originalValues?.bgColor });
     setHasChanges(changed);
-  }, [checkHasChanges, bgColor, originalValues?.bgColor]);
+  }, [checkHasChanges]);
 
   const handleTextChange = useCallback((value: string) => {
     setTextContent(value);
@@ -322,11 +357,19 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
       // Effects
       if (borderRadius !== originalValues.borderRadius) styleChanges.borderRadius = borderRadius;
       if (boxShadow !== originalValues.boxShadow) styleChanges.boxShadow = boxShadow;
-      if (opacity !== originalValues.opacity) styleChanges.opacity = String(parseInt(opacity) / 100);
+      if (opacity !== originalValues.opacity) styleChanges.opacity = String(opacity / 100);
     }
 
     if (Object.keys(styleChanges).length > 0) {
       changes.styles = styleChanges;
+      // Include position info for precise AST matching (also for styles)
+      changes.jsxFile = selectedElement.jsxFile;
+      changes.jsxLine = selectedElement.jsxLine;
+      changes.jsxCol = selectedElement.jsxCol;
+      // Mark as map element if elementCount > 1 (styles will affect all elements)
+      if (selectedElement.elementCount && selectedElement.elementCount > 1) {
+        changes.isMapElement = true;
+      }
     }
 
     onSave(selectedElement.jsxId, changes);
@@ -403,21 +446,34 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
       )}
 
       {/* 元素标签 */}
-      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-mono">
-            {selectedElement.tagName.toLowerCase()}
-          </span>
-          <span className="text-xs text-gray-400 font-mono">
-            #{selectedElement.jsxId}
-          </span>
+      <div className="px-4 py-3 border-b border-gray-100">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-mono">
+              {selectedElement.tagName.toLowerCase()}
+            </span>
+            <span className="text-xs text-gray-400 font-mono">
+              #{selectedElement.jsxId}
+            </span>
+          </div>
+          <button className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+            </svg>
+            Select parent
+          </button>
         </div>
-        <button className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
-          </svg>
-          Select parent
-        </button>
+        {/* 显示当前选中的是 .map() 生成的多个元素之一 */}
+        {selectedElement.elementCount && selectedElement.elementCount > 1 && (
+          <div className="mt-2 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700 flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>
+              Editing element {(selectedElement.elementIndex ?? 0) + 1} of {selectedElement.elementCount} (generated by .map())
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Text 内容 */}
@@ -438,26 +494,30 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
         </div>
       )}
 
-      {/* Colors */}
+      {/* Colors - 使用 visual-editor 包的 ColorPicker */}
       <div className="px-4 py-3 border-b border-gray-100">
         <h3 className="text-xs font-semibold text-gray-700 mb-3">Colors</h3>
         <div className="space-y-3">
-          <ColorPicker
-            label="Text color"
-            value={textColor}
-            onChange={(color) => {
-              setTextColor(color);
-              handleStyleChange('color', color);
-            }}
-          />
-          <ColorPicker
-            label="Background"
-            value={bgColor}
-            onChange={(color) => {
-              setBgColor(color);
-              handleStyleChange('backgroundColor', color);
-            }}
-          />
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">Text color</label>
+            <ColorPicker
+              value={textColor || '#000000'}
+              onChange={(color) => {
+                setTextColor(color);
+                handleStyleChange('color', color);
+              }}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">Background</label>
+            <ColorPicker
+              value={bgColor || '#ffffff'}
+              onChange={(color) => {
+                setBgColor(color);
+                handleStyleChange('backgroundColor', color);
+              }}
+            />
+          </div>
         </div>
       </div>
 
@@ -469,58 +529,21 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
           <div>
             <label className="text-xs text-gray-500 block mb-2">Margin</label>
             <div className="grid grid-cols-4 gap-2">
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] text-gray-400 mb-1">T</span>
-                <input
-                  type="text"
-                  value={margin.top}
-                  onChange={(e) => {
-                    setMargin(prev => ({ ...prev, top: e.target.value }));
-                    handleStyleChange('marginTop', e.target.value);
-                  }}
-                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="0"
-                />
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] text-gray-400 mb-1">R</span>
-                <input
-                  type="text"
-                  value={margin.right}
-                  onChange={(e) => {
-                    setMargin(prev => ({ ...prev, right: e.target.value }));
-                    handleStyleChange('marginRight', e.target.value);
-                  }}
-                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="0"
-                />
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] text-gray-400 mb-1">B</span>
-                <input
-                  type="text"
-                  value={margin.bottom}
-                  onChange={(e) => {
-                    setMargin(prev => ({ ...prev, bottom: e.target.value }));
-                    handleStyleChange('marginBottom', e.target.value);
-                  }}
-                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="0"
-                />
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] text-gray-400 mb-1">L</span>
-                <input
-                  type="text"
-                  value={margin.left}
-                  onChange={(e) => {
-                    setMargin(prev => ({ ...prev, left: e.target.value }));
-                    handleStyleChange('marginLeft', e.target.value);
-                  }}
-                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="0"
-                />
-              </div>
+              {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
+                <div key={side} className="flex flex-col items-center">
+                  <span className="text-[10px] text-gray-400 mb-1">{side[0].toUpperCase()}</span>
+                  <input
+                    type="text"
+                    value={margin[side]}
+                    onChange={(e) => {
+                      setMargin(prev => ({ ...prev, [side]: e.target.value }));
+                      handleStyleChange(`margin${side.charAt(0).toUpperCase() + side.slice(1)}`, e.target.value);
+                    }}
+                    className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="0"
+                  />
+                </div>
+              ))}
             </div>
           </div>
 
@@ -528,58 +551,21 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
           <div>
             <label className="text-xs text-gray-500 block mb-2">Padding</label>
             <div className="grid grid-cols-4 gap-2">
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] text-gray-400 mb-1">T</span>
-                <input
-                  type="text"
-                  value={padding.top}
-                  onChange={(e) => {
-                    setPadding(prev => ({ ...prev, top: e.target.value }));
-                    handleStyleChange('paddingTop', e.target.value);
-                  }}
-                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="0"
-                />
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] text-gray-400 mb-1">R</span>
-                <input
-                  type="text"
-                  value={padding.right}
-                  onChange={(e) => {
-                    setPadding(prev => ({ ...prev, right: e.target.value }));
-                    handleStyleChange('paddingRight', e.target.value);
-                  }}
-                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="0"
-                />
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] text-gray-400 mb-1">B</span>
-                <input
-                  type="text"
-                  value={padding.bottom}
-                  onChange={(e) => {
-                    setPadding(prev => ({ ...prev, bottom: e.target.value }));
-                    handleStyleChange('paddingBottom', e.target.value);
-                  }}
-                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="0"
-                />
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] text-gray-400 mb-1">L</span>
-                <input
-                  type="text"
-                  value={padding.left}
-                  onChange={(e) => {
-                    setPadding(prev => ({ ...prev, left: e.target.value }));
-                    handleStyleChange('paddingLeft', e.target.value);
-                  }}
-                  className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="0"
-                />
-              </div>
+              {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
+                <div key={side} className="flex flex-col items-center">
+                  <span className="text-[10px] text-gray-400 mb-1">{side[0].toUpperCase()}</span>
+                  <input
+                    type="text"
+                    value={padding[side]}
+                    onChange={(e) => {
+                      setPadding(prev => ({ ...prev, [side]: e.target.value }));
+                      handleStyleChange(`padding${side.charAt(0).toUpperCase() + side.slice(1)}`, e.target.value);
+                    }}
+                    className="w-full h-8 text-xs text-center border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="0"
+                  />
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -657,51 +643,34 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
         </div>
       </div>
 
-      {/* Typography */}
+      {/* Typography - 使用 visual-editor 包的 SelectControl */}
       <div className="px-4 py-3 border-b border-gray-100">
         <h3 className="text-xs font-semibold text-gray-700 mb-3">Typography</h3>
         <div className="space-y-3">
           {/* Font Size */}
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-600">Font size</span>
-            <select
+            <SelectControl
               value={fontSize}
-              onChange={(e) => {
-                setFontSize(e.target.value);
-                handleStyleChange('fontSize', e.target.value);
+              options={FONT_SIZE_OPTIONS}
+              onChange={(value) => {
+                setFontSize(value);
+                handleStyleChange('fontSize', value);
               }}
-              className="px-2 py-1 text-sm border border-gray-200 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Select</option>
-              <option value="12px">12px</option>
-              <option value="14px">14px</option>
-              <option value="16px">16px</option>
-              <option value="18px">18px</option>
-              <option value="20px">20px</option>
-              <option value="24px">24px</option>
-              <option value="32px">32px</option>
-              <option value="48px">48px</option>
-            </select>
+            />
           </div>
 
           {/* Font Weight */}
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-600">Font weight</span>
-            <select
+            <SelectControl
               value={fontWeight}
-              onChange={(e) => {
-                setFontWeight(e.target.value);
-                handleStyleChange('fontWeight', e.target.value);
+              options={FONT_WEIGHT_OPTIONS}
+              onChange={(value) => {
+                setFontWeight(value);
+                handleStyleChange('fontWeight', value);
               }}
-              className="px-2 py-1 text-sm border border-gray-200 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Select</option>
-              <option value="300">Light</option>
-              <option value="400">Normal</option>
-              <option value="500">Medium</option>
-              <option value="600">Semibold</option>
-              <option value="700">Bold</option>
-            </select>
+            />
           </div>
 
           {/* Text Alignment */}
@@ -730,122 +699,94 @@ function VisualEditPanel({ selectedElement, onUpdateElement, onSave, isSaving }:
         </div>
       </div>
 
-      {/* Border */}
+      {/* Border - 使用 visual-editor 包的控件 */}
       <div className="px-4 py-3 border-b border-gray-100">
         <h3 className="text-xs font-semibold text-gray-700 mb-3">Border</h3>
         <div className="space-y-3">
           {/* Border Width */}
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-600">Width</span>
-            <select
+            <SelectControl
               value={borderWidth}
-              onChange={(e) => {
-                setBorderWidth(e.target.value);
-                handleStyleChange('borderWidth', e.target.value);
+              options={BORDER_WIDTH_OPTIONS}
+              onChange={(value) => {
+                setBorderWidth(value);
+                handleStyleChange('borderWidth', value);
               }}
-              className="px-2 py-1 text-sm border border-gray-200 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Select</option>
-              <option value="0px">None</option>
-              <option value="1px">1px</option>
-              <option value="2px">2px</option>
-              <option value="3px">3px</option>
-              <option value="4px">4px</option>
-            </select>
+            />
           </div>
 
           {/* Border Color */}
-          <ColorPicker
-            label="Color"
-            value={borderColor}
-            onChange={(color) => {
-              setBorderColor(color);
-              handleStyleChange('borderColor', color);
-            }}
-          />
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">Color</label>
+            <ColorPicker
+              value={borderColor || '#000000'}
+              onChange={(color) => {
+                setBorderColor(color);
+                handleStyleChange('borderColor', color);
+              }}
+            />
+          </div>
 
           {/* Border Style */}
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-600">Style</span>
-            <select
+            <SelectControl
               value={borderStyle}
-              onChange={(e) => {
-                setBorderStyle(e.target.value);
-                handleStyleChange('borderStyle', e.target.value);
+              options={BORDER_STYLE_OPTIONS}
+              onChange={(value) => {
+                setBorderStyle(value);
+                handleStyleChange('borderStyle', value);
               }}
-              className="px-2 py-1 text-sm border border-gray-200 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Select</option>
-              <option value="solid">Solid</option>
-              <option value="dashed">Dashed</option>
-              <option value="dotted">Dotted</option>
-              <option value="none">None</option>
-            </select>
+            />
           </div>
         </div>
       </div>
 
-      {/* Effects */}
+      {/* Effects - 使用 visual-editor 包的控件 */}
       <div className="px-4 py-3 border-b border-gray-100">
         <h3 className="text-xs font-semibold text-gray-700 mb-3">Effects</h3>
         <div className="space-y-3">
           {/* Border Radius */}
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-600">Border radius</span>
-            <select
+            <SelectControl
               value={borderRadius}
-              onChange={(e) => {
-                setBorderRadius(e.target.value);
-                handleStyleChange('borderRadius', e.target.value);
+              options={BORDER_RADIUS_OPTIONS}
+              onChange={(value) => {
+                setBorderRadius(value);
+                handleStyleChange('borderRadius', value);
               }}
-              className="px-2 py-1 text-sm border border-gray-200 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Select</option>
-              <option value="0px">None</option>
-              <option value="4px">Small</option>
-              <option value="8px">Medium</option>
-              <option value="12px">Large</option>
-              <option value="16px">XL</option>
-              <option value="9999px">Full</option>
-            </select>
+            />
           </div>
 
           {/* Shadow */}
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-600">Shadow</span>
-            <select
+            <SelectControl
               value={boxShadow}
-              onChange={(e) => {
-                setBoxShadow(e.target.value);
-                handleStyleChange('boxShadow', e.target.value);
+              options={BOX_SHADOW_OPTIONS}
+              onChange={(value) => {
+                setBoxShadow(value);
+                handleStyleChange('boxShadow', value);
               }}
-              className="px-2 py-1 text-sm border border-gray-200 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Select</option>
-              <option value="none">None</option>
-              <option value="0 1px 2px 0 rgba(0,0,0,0.05)">Small</option>
-              <option value="0 4px 6px -1px rgba(0,0,0,0.1)">Medium</option>
-              <option value="0 10px 15px -3px rgba(0,0,0,0.1)">Large</option>
-              <option value="0 25px 50px -12px rgba(0,0,0,0.25)">XL</option>
-            </select>
+            />
           </div>
 
-          {/* Opacity */}
+          {/* Opacity - 使用 visual-editor 包的 SliderControl */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm text-gray-600">Opacity</span>
               <span className="text-xs text-gray-500">{opacity}%</span>
             </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
+            <SliderControl
               value={opacity}
-              onChange={(e) => {
-                setOpacity(e.target.value);
-                handleStyleChange('opacity', String(parseInt(e.target.value) / 100));
+              min={0}
+              max={100}
+              onChange={(value) => {
+                setOpacity(value);
+                handleStyleChange('opacity', String(value / 100));
               }}
-              className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
             />
           </div>
         </div>

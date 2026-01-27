@@ -9,7 +9,9 @@
     "start": "bun src/index.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "predeploy": "mkdir -p static/injection && cp ../packages/visual-editor/dist/injection/visual-edit-script.js static/injection/",
+    "deploy": "bun run predeploy && fly deploy --remote-only"
   },
   "dependencies": {
     "hono": "^4.0.0",

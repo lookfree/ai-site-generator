@@ -9,6 +9,7 @@ import { join } from 'path';
 import type { InstallResult } from '../types';
 
 export class DependencyManager {
+  private bunBinary = process.env.BUN_BINARY || process.execPath;
   private installing: Map<string, Promise<InstallResult>> = new Map();
 
   /**
@@ -48,7 +49,7 @@ export class DependencyManager {
     const logs: string[] = [];
 
     return new Promise((resolve) => {
-      const proc = spawn('bun', ['install'], {
+      const proc = spawn(this.bunBinary, ['install'], {
         cwd: projectPath,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, CI: 'true' },  // 非交互模式
@@ -109,7 +110,7 @@ export class DependencyManager {
     console.log(`[DependencyManager] Adding package: ${packageName} to ${projectPath}`);
 
     return new Promise((resolve) => {
-      const proc = spawn('bun', args, {
+      const proc = spawn(this.bunBinary, args, {
         cwd: projectPath,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -148,7 +149,7 @@ export class DependencyManager {
     console.log(`[DependencyManager] Removing package: ${packageName} from ${projectPath}`);
 
     return new Promise((resolve) => {
-      const proc = spawn('bun', ['remove', packageName], {
+      const proc = spawn(this.bunBinary, ['remove', packageName], {
         cwd: projectPath,
         stdio: ['pipe', 'pipe', 'pipe'],
       });

@@ -16,6 +16,7 @@ import projectRoutes from './routes/projects';
 import healthRoutes from './routes/health';
 import { HmrWebSocketProxy } from './services/hmr-proxy';
 import { viteManager } from './services/vite-manager';
+import { projectManager } from './services/project-manager';
 
 const DATA_DIR = process.env.DATA_DIR || '/data/sites';
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -32,8 +33,43 @@ app.route('/projects', projectRoutes);
 app.route('/health', healthRoutes);
 app.get('/metrics', (c) => c.redirect('/health/metrics'));
 
-// 静态文件服务 - 用于 visual-edit-script 等注入脚本
-app.use('/static/*', serveStatic({ root: './' }));
+// 静态文件服务 - visual-edit-script (本地副本，从 packages/visual-editor 复制)
+// 部署前需要运行: cp ../packages/visual-editor/dist/injection/visual-edit-script.js static/injection/
+app.use('/static/visual-edit-script.js', serveStatic({
+  root: './static/injection',
+  rewriteRequestPath: () => '/visual-edit-script.js',
+}));
+
+// HMR HTTP 路由 - 处理非 WebSocket 的 HMR 路径请求
+// Vite 客户端可能会先发送 HTTP 请求检测 HMR 端点是否可用
+// 如果返回 404，Vite 会触发全页刷新
+// 支持多种路径格式：
+//   - /hmr/{projectId}
+//   - /p/{projectId}/hmr/{projectId}
+//   - /api/proxy/{projectId}/hmr/{projectId}
+// 注意：必须跳过 WebSocket 升级请求，让 hmr-proxy 处理
+app.get('*', async (c, next) => {
+  const pathname = new URL(c.req.url).pathname;
+  const hmrMatch = pathname.match(/\/hmr\/([0-9a-f-]{36})/);
+
+  if (hmrMatch) {
+    // 检查是否是 WebSocket 升级请求
+    const upgradeHeader = c.req.header('Upgrade');
+    if (upgradeHeader?.toLowerCase() === 'websocket') {
+      // WebSocket 升级请求，跳过 HTTP 处理，让 server.on('upgrade') 处理
+      console.log(`[Server] HMR WebSocket upgrade request: ${pathname} (skipping HTTP handler)`);
+      return next();
+    }
+
+    const projectId = hmrMatch[1];
+    console.log(`[Server] HMR HTTP request: ${pathname} (projectId: ${projectId})`);
+
+    // 返回空响应，非 WebSocket 的 HTTP 请求
+    return c.text('', 200);
+  }
+
+  return next();
+});
 
 // 处理不带尾随斜杠的项目预览路由 - 重定向到带斜杠的版本
 // 必须放在 wildcard 路由之前
@@ -45,10 +81,29 @@ app.get('/p/:projectId', (c) => {
 // 项目预览代理 - 将 /p/{projectId}/* 转发到对应的 Vite Dev Server
 app.all('/p/:projectId/*', async (c) => {
   const projectId = c.req.param('projectId');
-  const instance = viteManager.getInstance(projectId);
+  let instance = viteManager.getInstance(projectId);
 
+  // 如果 Vite 没有运行，尝试自动启动
   if (!instance || instance.status !== 'running') {
-    return c.json({ success: false, error: 'Project not running' }, 404);
+    const status = await projectManager.getStatus(projectId);
+
+    if (!status.exists) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    // 项目存在但 Vite 没有运行，自动启动
+    console.log(`[Server] Auto-starting Vite for project: ${projectId}`);
+    try {
+      await projectManager.startPreview(projectId);
+      instance = viteManager.getInstance(projectId);
+
+      if (!instance || instance.status !== 'running') {
+        return c.json({ success: false, error: 'Failed to start project preview' }, 500);
+      }
+    } catch (error) {
+      console.error(`[Server] Failed to auto-start project ${projectId}:`, error);
+      return c.json({ success: false, error: 'Failed to start project' }, 500);
+    }
   }
 
   // 获取完整路径 - Vite 配置了 base: '/p/{projectId}/'，需要转发完整路径

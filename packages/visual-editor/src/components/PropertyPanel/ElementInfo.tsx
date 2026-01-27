@@ -1,8 +1,7 @@
 /**
- * 元素信息组件
+ * Element Info Component - Lovable style
  */
 
-import { Fragment } from 'react';
 import type { SelectedElementInfo } from '../../types';
 
 interface ElementInfoProps {
@@ -10,72 +9,107 @@ interface ElementInfoProps {
 }
 
 export default function ElementInfo({ element }: ElementInfoProps) {
-  const { tagName, jsxId, path } = element;
+  const { tagName } = element;
 
   return (
     <div className="element-info">
-      <div className="element-tag">
-        <span className="tag-bracket">&lt;</span>
-        <span className="tag-name">{tagName}</span>
-        <span className="tag-bracket">&gt;</span>
+      {/* Top bar with Select parent and undo buttons */}
+      <div className="info-header">
+        <button className="select-parent-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 19V5M5 12l7-7 7 7" />
+          </svg>
+          Select parent
+        </button>
+        <button className="undo-btn" title="Undo">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4" />
+          </svg>
+        </button>
       </div>
 
-      <div className="element-path">
-        {path.map((id, index) => (
-          <Fragment key={id}>
-            {index > 0 && <span className="path-separator">/</span>}
-            <span className={`path-item ${id === jsxId ? 'current' : ''}`}>
-              {id.slice(0, 6)}
-            </span>
-          </Fragment>
-        ))}
+      {/* Element tag badge at the bottom of header */}
+      <div className="element-badge-row">
+        <span className="element-badge">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+          </svg>
+          {tagName.toLowerCase()}
+        </span>
       </div>
 
       <style>{`
         .element-info {
-          padding: 12px;
-          background: #f9fafb;
-          border-bottom: 1px solid #e5e7eb;
+          padding: 12px 16px;
+          border-bottom: 1px solid #f3f4f6;
         }
 
-        .element-tag {
-          font-family: 'SF Mono', Monaco, monospace;
-          font-size: 14px;
-          margin-bottom: 6px;
-        }
-
-        .tag-bracket {
-          color: #9ca3af;
-        }
-
-        .tag-name {
-          color: #3b82f6;
-          font-weight: 600;
-        }
-
-        .element-path {
+        .info-header {
           display: flex;
           align-items: center;
-          flex-wrap: wrap;
-          gap: 4px;
-          font-size: 11px;
-          font-family: 'SF Mono', Monaco, monospace;
+          justify-content: space-between;
+          margin-bottom: 12px;
         }
 
-        .path-separator {
-          color: #d1d5db;
+        .select-parent-btn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 12px;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          background: #fff;
+          font-size: 13px;
+          font-weight: 500;
+          color: #374151;
+          cursor: pointer;
+          transition: all 0.15s;
         }
 
-        .path-item {
-          padding: 2px 4px;
-          background: #e5e7eb;
-          border-radius: 3px;
+        .select-parent-btn:hover {
+          background: #f9fafb;
+          border-color: #d1d5db;
+        }
+
+        .undo-btn {
+          width: 36px;
+          height: 36px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          background: #fff;
           color: #6b7280;
+          cursor: pointer;
+          transition: all 0.15s;
         }
 
-        .path-item.current {
+        .undo-btn:hover {
+          background: #f9fafb;
+          border-color: #d1d5db;
+        }
+
+        .element-badge-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .element-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 10px;
           background: #dbeafe;
           color: #1d4ed8;
+          font-size: 13px;
+          font-weight: 500;
+          border-radius: 6px;
+        }
+
+        .element-badge svg {
+          opacity: 0.7;
         }
       `}</style>
     </div>

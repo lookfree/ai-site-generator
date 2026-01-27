@@ -1,34 +1,7 @@
 import { useState, useCallback } from 'react';
 import type { ComponentNode } from '../services/api';
-import VisualEditPanel from './VisualEditPanel';
 import ThemePanel from './ThemePanel';
-
-interface SelectedElementInfo {
-  jsxId: string;
-  // Source code location info (for AST matching)
-  jsxFile?: string;
-  jsxLine?: number;
-  jsxCol?: number;
-  tagName: string;
-  className: string;
-  textContent: string;
-  computedStyles: Record<string, string>;
-  boundingRect: DOMRect;
-  attributes: Record<string, string>;
-  path: string[];
-}
-
-interface SavedChanges {
-  textContent?: string;
-  originalTextContent?: string;
-  tagName?: string;
-  className?: string;
-  // Position info for precise AST matching
-  jsxFile?: string;
-  jsxLine?: number;
-  jsxCol?: number;
-  styles?: Record<string, string>;
-}
+import VisualEditorPanel from './VisualEditorPanel';
 
 interface Theme {
   id: string;
@@ -61,10 +34,6 @@ interface LeftPanelProps {
   onGenerate: (description: string) => void;
   projectId?: string;
   onSelectComponent?: (component: ComponentNode) => void;
-  selectedElementFromIframe?: SelectedElementInfo | null;
-  onUpdateElement?: (jsxId: string, updates: { type: string; value: unknown }) => void;
-  onSaveElement?: (jsxId: string, changes: SavedChanges) => void;
-  isSaving?: boolean;
   onApplyTheme?: (theme: Theme) => void;
 }
 
@@ -77,10 +46,6 @@ function LeftPanel({
   generationPercent,
   onGenerate,
   projectId,
-  selectedElementFromIframe,
-  onUpdateElement,
-  onSaveElement,
-  isSaving,
   onApplyTheme,
 }: LeftPanelProps) {
   const [description, setDescription] = useState('');
@@ -100,7 +65,7 @@ function LeftPanel({
 
   return (
     <div className="w-96 bg-white border-r border-gray-200 flex flex-col">
-      {/* 面板标题 */}
+      {/* Panel header */}
       <div className="px-4 py-3 border-b border-gray-200">
         {viewMode === 'design' && designSection !== 'menu' ? (
           <div className="flex items-center gap-2">
@@ -137,15 +102,15 @@ function LeftPanel({
         )}
       </div>
 
-      {/* 内容区 */}
+      {/* Content area */}
       <div className="flex-1 overflow-auto">
         {viewMode === 'chat' ? (
-          /* Chat 模式 - 输入描述 */
+          /* Chat mode - input description */
           <div className="h-full flex flex-col p-4">
             {isGenerating ? (
-              /* 生成中状态 */
+              /* Generating state */
               <div className="flex-1 flex flex-col items-center justify-center text-center px-4">
-                {/* 进度环 */}
+                {/* Progress ring */}
                 <div className="relative w-24 h-24 mb-6">
                   <svg className="w-24 h-24 transform -rotate-90">
                     <circle
@@ -174,10 +139,10 @@ function LeftPanel({
                   </div>
                 </div>
 
-                {/* 状态信息 */}
+                {/* Status info */}
                 <p className="text-gray-700 font-medium text-lg mb-2">{generationStatus}</p>
 
-                {/* 进度条 */}
+                {/* Progress bar */}
                 <div className="w-full bg-gray-200 rounded-full h-2 mb-4">
                   <div
                     className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
@@ -185,7 +150,7 @@ function LeftPanel({
                   />
                 </div>
 
-                {/* 阶段提示 */}
+                {/* Stage hints */}
                 <div className="w-full space-y-2 text-left">
                   <div className={`flex items-center text-sm ${generationPercent >= 10 ? 'text-green-600' : 'text-gray-400'}`}>
                     <span className="mr-2">{generationPercent >= 10 ? '✓' : '○'}</span>
@@ -210,7 +175,7 @@ function LeftPanel({
                 </p>
               </div>
             ) : (
-              /* 输入表单 */
+              /* Input form */
               <form onSubmit={handleSubmit} className="flex-1 flex flex-col">
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -232,7 +197,7 @@ function LeftPanel({
                   Generate Website
                 </button>
 
-                {/* 示例提示 */}
+                {/* Example prompts */}
                 <div className="mt-4 p-3 bg-gray-50 rounded-lg">
                   <p className="text-xs text-gray-500 font-medium mb-2">Example prompts:</p>
                   <ul className="text-xs text-gray-500 space-y-1">
@@ -245,10 +210,10 @@ function LeftPanel({
             )}
           </div>
         ) : (
-          /* Design 模式 - Lovable 风格菜单 */
+          /* Design mode - Lovable style menu */
           <div className="h-full">
             {designSection === 'menu' ? (
-              /* 主菜单 - Themes 和 Visual edits */
+              /* Main menu - Themes and Visual edits */
               <div className="p-4 space-y-3">
                 {/* Themes Card */}
                 <button
@@ -296,13 +261,7 @@ function LeftPanel({
               /* Themes Panel */
               <ThemePanel projectId={projectId} onApplyTheme={onApplyTheme} />
             ) : (
-              /* Visual Edits Panel */
-              <VisualEditPanel
-                selectedElement={selectedElementFromIframe ?? null}
-                onUpdateElement={onUpdateElement}
-                onSave={onSaveElement}
-                isSaving={isSaving}
-              />
+              <VisualEditorPanel projectId={projectId} />
             )}
           </div>
         )}

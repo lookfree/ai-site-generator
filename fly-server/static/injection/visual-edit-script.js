@@ -320,7 +320,10 @@ var VisualEditController = class {
           this.handleElementUpdate(payload);
           break;
         case "SELECT_BY_JSX_ID":
-          this.selectByJsxId(payload.jsxId);
+          this.selectByJsxId(
+            payload.jsxId,
+            payload.elementIndex
+          );
           break;
         case "GET_FULL_HTML":
           this.sendFullHtml();
@@ -349,8 +352,14 @@ var VisualEditController = class {
     const info = this.extractElementInfo(element);
     this.postMessage("ELEMENT_SELECTED", info);
   }
-  selectByJsxId(jsxId) {
-    const element = document.querySelector(`[data-jsx-id="${jsxId}"]`);
+  selectByJsxId(jsxId, elementIndex) {
+    let element = null;
+    if (typeof elementIndex === "number") {
+      const allElements = document.querySelectorAll(`[data-jsx-id="${jsxId}"]`);
+      element = allElements[elementIndex] || null;
+    } else {
+      element = document.querySelector(`[data-jsx-id="${jsxId}"]`);
+    }
     if (element) {
       this.selectElement(element);
       element.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -377,6 +386,9 @@ var VisualEditController = class {
   extractElementInfo(element) {
     const computedStyles = window.getComputedStyle(element);
     const relevantStyles = {};
+    const jsxFile = element.getAttribute("data-jsx-file") || void 0;
+    const jsxLine = element.getAttribute("data-jsx-line");
+    const jsxCol = element.getAttribute("data-jsx-col");
     const styleProps = [
       "color",
       "backgroundColor",
@@ -428,26 +440,43 @@ var VisualEditController = class {
       }
     }
     const path = this.getElementPath(element);
-
-    // 提取源代码位置信息 (用于精确的 AST 定位)
-    const jsxFile = element.getAttribute("data-jsx-file") || "";
-    const jsxLine = element.getAttribute("data-jsx-line") || "";
-    const jsxCol = element.getAttribute("data-jsx-col") || "";
-
+    const jsxId = element.getAttribute("data-jsx-id") || "";
+    const { elementIndex, elementCount } = this.getElementIndexAmongSiblings(element, jsxId);
     return {
-      jsxId: element.getAttribute("data-jsx-id") || "",
-      // 源代码位置信息
+      jsxId,
       jsxFile,
-      jsxLine: jsxLine ? parseInt(jsxLine, 10) : 0,
-      jsxCol: jsxCol ? parseInt(jsxCol, 10) : 0,
+      jsxLine: jsxLine ? Number(jsxLine) : void 0,
+      jsxCol: jsxCol ? Number(jsxCol) : void 0,
       tagName: element.tagName.toLowerCase(),
       className: element.className,
       textContent: this.getDirectTextContent(element),
       computedStyles: relevantStyles,
       boundingRect: element.getBoundingClientRect(),
       attributes,
-      path
+      path,
+      elementIndex,
+      elementCount
     };
+  }
+  /**
+   * 获取元素在相同 jsxId 元素中的索引
+   * 用于处理 .map() 生成的多个相同 jsxId 的元素
+   */
+  getElementIndexAmongSiblings(element, jsxId) {
+    if (!jsxId) return { elementIndex: 0, elementCount: 1 };
+    const allElements = document.querySelectorAll(`[data-jsx-id="${jsxId}"]`);
+    const elementCount = allElements.length;
+    if (elementCount <= 1) {
+      return { elementIndex: 0, elementCount: 1 };
+    }
+    let elementIndex = 0;
+    for (let i = 0; i < allElements.length; i++) {
+      if (allElements[i] === element) {
+        elementIndex = i;
+        break;
+      }
+    }
+    return { elementIndex, elementCount };
   }
   getDirectTextContent(element) {
     let text = "";
@@ -472,9 +501,15 @@ var VisualEditController = class {
   }
   // ========== 元素更新 ==========
   handleElementUpdate(payload) {
-    const element = document.querySelector(
-      `[data-jsx-id="${payload.jsxId}"]`
-    );
+    let element = null;
+    if (this.selectedElement && this.selectedElement.getAttribute("data-jsx-id") === payload.jsxId) {
+      element = this.selectedElement;
+    } else if (typeof payload.elementIndex === "number") {
+      const allElements = document.querySelectorAll(`[data-jsx-id="${payload.jsxId}"]`);
+      element = allElements[payload.elementIndex] || null;
+    } else {
+      element = document.querySelector(`[data-jsx-id="${payload.jsxId}"]`);
+    }
     if (!element) return;
     switch (payload.type) {
       case "text":

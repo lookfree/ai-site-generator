@@ -101,9 +101,10 @@ export class ElementBridge {
   updateElement(
     jsxId: string,
     type: 'text' | 'className' | 'style' | 'attribute',
-    value: unknown
+    value: unknown,
+    elementIndex?: number
   ): void {
-    this.send('UPDATE_ELEMENT', { jsxId, type, value });
+    this.send('UPDATE_ELEMENT', { jsxId, type, value, elementIndex });
   }
 
   /**

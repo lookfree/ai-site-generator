@@ -8,8 +8,14 @@ COPY package.json bun.lock* ./
 # 安装依赖（包括 devDependencies 用于 TypeScript）
 RUN bun install
 
-# 复制源代码
+# 复制源代码（包括 static/injection/visual-edit-script.js）
 COPY . .
+
+# 复制并构建 vite-plugin-jsx-tagger
+COPY packages/vite-plugin-jsx-tagger /app/packages/vite-plugin-jsx-tagger
+WORKDIR /app/packages/vite-plugin-jsx-tagger
+RUN bun install && bun run build
+WORKDIR /app
 
 # 创建数据目录
 RUN mkdir -p /data/sites
