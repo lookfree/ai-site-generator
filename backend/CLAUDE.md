@@ -384,3 +384,54 @@ iframe.src = iframe.src;  // 这会导致完整的页面重载
 - HMR (Hot Module Replacement) 会自动检测文件变化并更新页面
 - 不需要手动刷新 iframe，手动刷新反而会破坏 HMR 的无缝更新体验
 - 保存操作只需要将代码写入文件，Vite 会通过 WebSocket 推送更新到浏览器
+
+### 2026-01-27: "Unsaved changes" 不显示问题修复
+
+**问题现象**：
+- 第一次编辑并保存后，再次编辑同一元素
+- "Unsaved changes" 标签不显示
+- Save 按钮点击无反应
+
+**根本原因**：
+`editor-store.ts` 中的 `addAction` 函数会对同一元素的同类型编辑进行去重（更新现有 action 而非创建新的）：
+
+```typescript
+// 问题逻辑
+if (existingIndex >= 0) {
+  // 更新现有 action 的 newValue，保留原始 oldValue
+  newHistory[existingIndex] = { ...newHistory[existingIndex], newValue: action.newValue };
+  // historyIndex 不变！
+}
+```
+
+保存后流程：
+1. 保存成功后：`lastSavedIndex = historyIndex = 0`
+2. 再次编辑同一元素：更新 action[0]，`historyIndex` 仍然 = 0
+3. `pendingActions = history.slice(lastSavedIndex + 1, historyIndex + 1)` = `history.slice(1, 1)` = `[]`
+4. `hasChanges = false` → 不显示 "Unsaved changes"
+
+**修复内容**：
+
+1. **packages/visual-editor/src/stores/editor-store.ts**:
+   - 新增 `clearHistory()` 方法：清空历史记录并重置 `historyIndex` 为 -1
+
+2. **frontend/src/components/VisualEditorPanel.tsx**:
+   - 保存成功后调用 `clearHistory()` 和 `setLastSavedIndex(-1)`
+   - 这样新的编辑会创建全新的 action，正确触发 "Unsaved changes"
+
+**关键认知**：
+- 保存后需要清空历史，让后续编辑从干净状态开始
+- 去重逻辑适用于连续编辑（未保存时），但保存后应重置状态
+
+### 已知限制：偶发的 HMR Full Reload
+
+**现象**：某些保存操作会触发页面完整刷新（白屏 1-2 秒）而非平滑的 HMR 更新
+
+**原因**：这是 Vite/React Fast Refresh 的正常行为，以下情况会触发 full reload：
+- 修改的文件导出了非 React 组件（常量、工具函数等）
+- 改动跨越了模块边界
+- React Fast Refresh 无法安全地热替换
+
+**不是 bug**，如需优化可：
+- 确保被编辑的文件只导出 React 组件
+- 将常量、工具函数拆分到单独文件
